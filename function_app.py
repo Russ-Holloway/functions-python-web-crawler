@@ -32,6 +32,14 @@ blob_service_client = BlobServiceClient(
     credential=credential
 )
 
+# Initialize Cosmos DB client
+cosmos_client = None
+if COSMOS_DB_ENDPOINT:
+    cosmos_client = CosmosClient(COSMOS_DB_ENDPOINT, credential=credential)
+    database = cosmos_client.get_database_client(COSMOS_DB_NAME)
+    metadata_container = database.get_container_client(COSMOS_CONTAINER_NAME)
+    config_container = database.get_container_client("WebsiteConfigs")
+
 @app.route(route="search_site", methods=["POST"])
 def search_site(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
@@ -488,17 +496,14 @@ def remove_document_from_storage(doc_url: str, website_id: str) -> bool:
 def get_websites_config() -> List[Dict[str, Any]]:
     """Get all website configurations from storage"""
     try:
-        # For now, return a default configuration
-        # In production, this should read from Cosmos DB or configuration storage
-        return [
-            {
-                'id': 'default_website',
-                'url': 'https://example.com',
-                'name': 'Example Website',
-                'file_patterns': ['.pdf', '.docx', '.xlsx', '.pptx'],
-                'active': True
-            }
-        ]
+        if not cosmos_client:
+            logging.warning("Cosmos DB not configured, returning empty list")
+            return []
+            
+        # Query all active website configurations
+        query = "SELECT * FROM c WHERE c.active = true"
+        websites = list(config_container.query_items(query=query, enable_cross_partition_query=True))
+        return websites
     except Exception as e:
         logging.error(f"Error getting website configurations: {str(e)}")
         return []
@@ -507,9 +512,12 @@ def get_websites_config() -> List[Dict[str, Any]]:
 def save_website_config(website_config: Dict[str, Any]) -> bool:
     """Save website configuration to storage"""
     try:
-        # For now, just log the configuration
-        # In production, this should save to Cosmos DB
-        logging.info(f"Saving website config: {website_config}")
+        if not cosmos_client:
+            logging.error("Cosmos DB not configured")
+            return False
+            
+        config_container.upsert_item(website_config)
+        logging.info(f"Successfully saved website config: {website_config['id']}")
         return True
     except Exception as e:
         logging.error(f"Error saving website config: {str(e)}")
@@ -519,15 +527,12 @@ def save_website_config(website_config: Dict[str, Any]) -> bool:
 def get_website_config(website_id: str) -> Dict[str, Any]:
     """Get a specific website configuration"""
     try:
-        # For now, return a default configuration
-        # In production, this should read from Cosmos DB
-        return {
-            'id': website_id,
-            'url': 'https://example.com',
-            'name': 'Example Website',
-            'file_patterns': ['.pdf', '.docx', '.xlsx', '.pptx'],
-            'active': True
-        }
+        if not cosmos_client:
+            logging.error("Cosmos DB not configured")
+            return None
+            
+        item = config_container.read_item(item=website_id, partition_key=website_id)
+        return item
     except Exception as e:
         logging.error(f"Error getting website config {website_id}: {str(e)}")
         return None
@@ -541,10 +546,14 @@ def get_all_website_configs() -> List[Dict[str, Any]]:
 def get_stored_document_metadata(website_id: str) -> List[Dict[str, Any]]:
     """Get metadata for all documents stored for a website"""
     try:
-        # For now, return empty list
-        # In production, this should query Cosmos DB
-        logging.info(f"Getting stored document metadata for website {website_id}")
-        return []
+        if not cosmos_client:
+            logging.warning("Cosmos DB not configured, returning empty list")
+            return []
+            
+        query = "SELECT * FROM c WHERE c.website_id = @website_id"
+        parameters = [{"name": "@website_id", "value": website_id}]
+        documents = list(metadata_container.query_items(query=query, parameters=parameters, enable_cross_partition_query=True))
+        return documents
     except Exception as e:
         logging.error(f"Error getting stored document metadata: {str(e)}")
         return []
@@ -553,9 +562,17 @@ def get_stored_document_metadata(website_id: str) -> List[Dict[str, Any]]:
 def save_document_metadata(doc_info: Dict[str, Any], website_id: str) -> bool:
     """Save document metadata to storage"""
     try:
-        # For now, just log the metadata
-        # In production, this should save to Cosmos DB
-        logging.info(f"Saving document metadata: {doc_info}")
+        if not cosmos_client:
+            logging.error("Cosmos DB not configured")
+            return False
+            
+        # Create unique ID for the document
+        doc_id = hashlib.md5(doc_info['url'].encode()).hexdigest()
+        doc_info['id'] = doc_id
+        doc_info['website_id'] = website_id
+        
+        metadata_container.upsert_item(doc_info)
+        logging.info(f"Successfully saved document metadata: {doc_info['url']}")
         return True
     except Exception as e:
         logging.error(f"Error saving document metadata: {str(e)}")
@@ -565,10 +582,13 @@ def save_document_metadata(doc_info: Dict[str, Any], website_id: str) -> bool:
 def get_document_metadata(doc_url: str, website_id: str) -> Dict[str, Any]:
     """Get metadata for a specific document"""
     try:
-        # For now, return None
-        # In production, this should query Cosmos DB
-        logging.info(f"Getting document metadata for {doc_url}")
-        return None
+        if not cosmos_client:
+            logging.error("Cosmos DB not configured")
+            return None
+            
+        doc_id = hashlib.md5(doc_url.encode()).hexdigest()
+        item = metadata_container.read_item(item=doc_id, partition_key=website_id)
+        return item
     except Exception as e:
         logging.error(f"Error getting document metadata: {str(e)}")
         return None
@@ -577,9 +597,13 @@ def get_document_metadata(doc_url: str, website_id: str) -> Dict[str, Any]:
 def delete_document_metadata(doc_url: str, website_id: str) -> bool:
     """Delete document metadata from storage"""
     try:
-        # For now, just log the deletion
-        # In production, this should delete from Cosmos DB
-        logging.info(f"Deleting document metadata for {doc_url}")
+        if not cosmos_client:
+            logging.error("Cosmos DB not configured")
+            return False
+            
+        doc_id = hashlib.md5(doc_url.encode()).hexdigest()
+        metadata_container.delete_item(item=doc_id, partition_key=website_id)
+        logging.info(f"Successfully deleted document metadata for {doc_url}")
         return True
     except Exception as e:
         logging.error(f"Error deleting document metadata: {str(e)}")
