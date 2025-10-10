@@ -16,7 +16,8 @@ from azure.storage.blob import BlobServiceClient
 from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+# Function App with anonymous authentication for testing
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # Configuration from environment variables
 STORAGE_ACCOUNT_NAME = os.environ.get("STORAGE_ACCOUNT_NAME", "stbtpdocmon17600004")
