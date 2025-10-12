@@ -12,3 +12,6 @@ lxml
 azure-storage-blob>=12.19.0
 azure-cosmos>=4.5.1
 azure-identity>=1.15.0
+
+# Pin cryptography to fix Azure Functions compatibility issue
+cryptography==43.0.3
