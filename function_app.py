@@ -303,7 +303,7 @@ def get_enabled_websites():
             "priority": "blocked"
         },
         "cps_working": {
-            "name": "Crown Prosecution Service - Prosecution Guidance",
+            "name": "Crown Prosecution Service",
             "url": "https://www.cps.gov.uk/prosecution-guidance",
             "enabled": True,
             "description": "CPS prosecution guidance and legal policies (2-level crawl enabled)",
@@ -409,8 +409,8 @@ def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcra
         logging.error(f'Error storing document hashes: {str(e)}')
         return False
 
-# Function App with anonymous access for easier testing
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# Function App with function level authentication for security
+app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 # Timer trigger function that runs every 4 hours
 @app.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False,
@@ -960,26 +960,40 @@ def status(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="websites", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def websites(req: func.HttpRequest) -> func.HttpResponse:
-    """Website configuration endpoint - shows actual crawl targets from main config"""
+    """Simple website configuration endpoint - shows available crawl targets"""
     logging.info('Website configuration endpoint called')
     
-    # Get the actual configuration from the main crawling function
-    enabled_sites = get_enabled_websites()
-    
-    # Convert to the expected format for the API response
-    website_configs = {}
-    for site in enabled_sites:
-        # Create a key from the site name
-        key = site["name"].lower().replace(" ", "_").replace("-", "_").replace("(", "").replace(")", "")
-        key = key.replace(":", "").replace(",", "")
-        
-        website_configs[key] = {
-            "name": site["name"],
-            "url": site["url"],
-            "enabled": site["enabled"],
-            "description": site["description"],
-            "document_types": site["document_types"]
+    # Step 3b: Enhanced website configuration with specific URLs
+    website_configs = {
+        "legislation_si_2024_1052": {
+            "name": "UK Legislation - SI 2024/1052",
+            "url": "https://www.legislation.gov.uk/uksi/2024/1052/contents",
+            "enabled": True,
+            "description": "Specific legislation document (proven working)",
+            "document_types": ["pdf", "xml"]
+        },
+        "legislation_si_recent": {
+            "name": "UK Legislation - Recent SI",
+            "url": "https://www.legislation.gov.uk/uksi/2024/1051/contents",
+            "enabled": True,
+            "description": "Another recent legislation document",
+            "document_types": ["pdf", "xml"]
+        },
+        "legislation_ukpga_sample": {
+            "name": "UK Legislation - UKPGA Sample",
+            "url": "https://www.legislation.gov.uk/ukpga/2024/22/contents",
+            "enabled": False,
+            "description": "UK Public General Acts sample",
+            "document_types": ["pdf", "xml"]
+        },
+        "test_site": {
+            "name": "Test Site",
+            "url": "https://www.legislation.gov.uk/uksi/2024/1050/contents",
+            "enabled": False,
+            "description": "Additional test site for expansion",
+            "document_types": ["pdf", "xml"]
         }
+    }
     
     return func.HttpResponse(
         json.dumps({
