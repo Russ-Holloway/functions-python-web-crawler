@@ -409,8 +409,8 @@ def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcra
         logging.error(f'Error storing document hashes: {str(e)}')
         return False
 
-# Function App with function level authentication for security
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+# Function App with anonymous access for easier testing
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # Timer trigger function that runs every 4 hours
 @app.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False,
