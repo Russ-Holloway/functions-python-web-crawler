@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "STORAGE_ACCOUNT_NAME": "",
+    "COSMOS_DB_ENDPOINT": "",
+    "COSMOS_DB_NAME": "DocumentMonitor",
+    "COSMOS_CONTAINER_NAME": "DocumentMetadata",
+    "MANAGED_IDENTITY_CLIENT_ID": "",
+    "WEBSITE_RUN_FROM_PACKAGE": "1"
+  }
+}
