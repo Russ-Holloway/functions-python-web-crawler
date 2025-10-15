@@ -12,10 +12,11 @@
 2. **MANDATORY PRE-CHANGE CHECKLIST:**
    ```
    [ ] Current system status verified (run status endpoint test)
-   [ ] Stable backup created with timestamp
-   [ ] Change documented with version number
+   [ ] Stable backup created with proper version number (v{MAJOR}.{MINOR}.{PATCH})
+   [ ] Change documented with version number and description
    [ ] Infrastructure confirmed intact (esp. App Service Plan)
-   [ ] Deployment plan prepared
+   [ ] Version incremented appropriately (patch/minor/major)
+   [ ] Deployment plan prepared with versioned filename
    ```
 
 ### **NEVER DO THESE THINGS:**
@@ -51,19 +52,28 @@
 
 ### **DEPLOYMENT WORKFLOW:**
 ```
-1. Current Status Check:
+1. Determine Version Increment:
+   Bug fix: v2.0.0 → v2.0.1
+   New feature: v2.0.0 → v2.1.0  
+   Major change: v2.0.0 → v3.0.0
+
+2. Update Version in Code:
+   Change "version": "v2.0.1" in function_app.py
+
+3. Current Status Check:
    Invoke-WebRequest -Uri "https://func-btp-uks-prod-doc-crawler-01.azurewebsites.net/api/status"
 
-2. Create Backup:
-   $version = "v1.X-{description}"
+4. Create Versioned Backup:
+   $version = "v2.0.1"
+   $desc = "description"
    $timestamp = Get-Date -Format "yyyy-MM-dd-HHmm"
-   Compress-Archive -Path function_app.py,host.json,requirements.txt -DestinationPath "function-app-$version-$timestamp.zip"
+   Compress-Archive -Path function_app.py,host.json,requirements.txt -DestinationPath "function-app-$version-$desc-$timestamp.zip"
 
-3. Deploy in Cloud Shell:
-   az functionapp deployment source config-zip --resource-group rg-btp-uks-prod-doc-crawler-01 --name func-btp-uks-prod-doc-crawler-01 --src your-file.zip
+5. Deploy in Cloud Shell:
+   az functionapp deployment source config-zip --resource-group rg-btp-uks-prod-doc-crawler-01 --name func-btp-uks-prod-doc-crawler-01 --src function-app-v2.0.1-description-timestamp.zip
 
-4. Post-Deployment Test:
-   # Wait 60 seconds, then test endpoints
+6. Post-Deployment Test:
+   # Wait 60 seconds, then test endpoints and verify version number
 ```
 
 ### **ROLLBACK WORKFLOW:**

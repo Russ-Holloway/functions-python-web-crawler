@@ -942,7 +942,7 @@ def status(req: func.HttpRequest) -> func.HttpResponse:
         json.dumps({
             "status": "WORKING",
             "message": "Web crawler with REAL Azure Storage integration is operational",
-            "version": "v2.0.0",
+            "version": "1.1-status-endpoint",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "storage_account": "stbtpuksprodcrawler01",
             "container": "documents",
