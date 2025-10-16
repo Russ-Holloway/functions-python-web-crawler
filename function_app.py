@@ -1037,28 +1037,29 @@ def store_crawl_history_activity(input: dict) -> bool:
     logging.info('Activity: Storing crawl history to Azure Storage')
     return store_crawl_history(input)
 
-# Function App with anonymous authentication
-app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# ============================================================================
+# MAIN FUNCTION APP - Use DFApp as main app (supports both regular and durable functions)
+# ============================================================================
 
-# Register Durable Functions blueprint
-dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+# Use DFApp as the main app - it extends FunctionApp and supports both regular and durable functions
+app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 
 # Register orchestrator
-dfapp.orchestration_trigger(context_name="context")(web_crawler_orchestrator)
+app.orchestration_trigger(context_name="context")(web_crawler_orchestrator)
 
 # Register activity functions
-dfapp.activity_trigger(input_name="input")(get_configuration_activity)
-dfapp.activity_trigger(input_name="input")(get_document_hashes_activity)
-dfapp.activity_trigger(input_name="input")(crawl_single_website_activity)
-dfapp.activity_trigger(input_name="input")(store_document_hashes_activity)
-dfapp.activity_trigger(input_name="input")(store_crawl_history_activity)
+app.activity_trigger(input_name="input")(get_configuration_activity)
+app.activity_trigger(input_name="input")(get_document_hashes_activity)
+app.activity_trigger(input_name="input")(crawl_single_website_activity)
+app.activity_trigger(input_name="input")(store_document_hashes_activity)
+app.activity_trigger(input_name="input")(store_crawl_history_activity)
 
 # ============================================================================
 # DURABLE FUNCTIONS TIMER TRIGGER
 # ============================================================================
 
-@dfapp.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False, use_monitor=False)
-@dfapp.durable_client_input(client_name="client")
+@app.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False, use_monitor=False)
+@app.durable_client_input(client_name="client")
 async def scheduled_crawler_orchestrated(mytimer: func.TimerRequest, client) -> None:
     """
     Timer trigger function that starts orchestrated crawling every 4 hours
@@ -1171,8 +1172,8 @@ def scheduled_crawler(mytimer: func.TimerRequest) -> None:
 # DURABLE FUNCTIONS HTTP TRIGGERS
 # ============================================================================
 
-@dfapp.route(route="orchestrators/web_crawler", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-@dfapp.durable_client_input(client_name="client")
+@app.route(route="orchestrators/web_crawler", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.durable_client_input(client_name="client")
 async def start_web_crawler_orchestration(req: func.HttpRequest, client) -> func.HttpResponse:
     """
     HTTP Trigger to start the web crawler orchestration
@@ -1230,8 +1231,8 @@ async def start_web_crawler_orchestration(req: func.HttpRequest, client) -> func
             mimetype="application/json"
         )
 
-@dfapp.route(route="orchestrators/web_crawler/{instanceId}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-@dfapp.durable_client_input(client_name="client")
+@app.route(route="orchestrators/web_crawler/{instanceId}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.durable_client_input(client_name="client")
 async def get_orchestration_status(req: func.HttpRequest, client) -> func.HttpResponse:
     """
     HTTP Trigger to check orchestration status
@@ -1300,8 +1301,8 @@ async def get_orchestration_status(req: func.HttpRequest, client) -> func.HttpRe
             mimetype="application/json"
         )
 
-@dfapp.route(route="orchestrators/web_crawler/{instanceId}/terminate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
-@dfapp.durable_client_input(client_name="client")
+@app.route(route="orchestrators/web_crawler/{instanceId}/terminate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.durable_client_input(client_name="client")
 async def terminate_orchestration(req: func.HttpRequest, client) -> func.HttpResponse:
     """
     HTTP Trigger to terminate a running orchestration
