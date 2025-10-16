@@ -260,15 +260,15 @@ def calculate_content_hash(content):
     """Calculate MD5 hash of content for change detection"""
     return hashlib.md5(content).hexdigest()
 
-def get_document_hashes_from_storage(storage_account="stbtpuksprodcrawler01", container="documents"):
-    """Retrieve stored document hashes from Azure Storage for change detection - using existing documents container"""
+def get_document_hashes_from_storage(storage_account="stbtpuksprodcrawler01", container="crawl-metadata"):
+    """Retrieve stored document hashes from Azure Storage for change detection - using crawl-metadata container"""
     try:
         access_token = get_managed_identity_token()
         if not access_token:
             logging.error('Failed to get access token for hash retrieval')
             return {}
             
-        filename = "document_hashes.json"
+        filename = "document-hashes.json"
         url = f"https://{storage_account}.blob.core.windows.net/{container}/{filename}"
         
         req = urllib.request.Request(url, method='GET')
@@ -612,15 +612,15 @@ def crawl_website_core(site_config, previous_hashes=None):
     
     return result
 
-def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcrawler01", container="documents"):
-    """Store document hashes to Azure Storage for change detection - using existing documents container"""
+def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcrawler01", container="crawl-metadata"):
+    """Store document hashes to Azure Storage for change detection - using crawl-metadata container"""
     try:
         access_token = get_managed_identity_token()
         if not access_token:
             logging.error('Failed to get access token for hash storage')
             return False
             
-        filename = "document_hashes.json"
+        filename = "document-hashes.json"
         content = json.dumps(hash_data, indent=2).encode('utf-8')
         
         url = f"https://{storage_account}.blob.core.windows.net/{container}/{filename}"
