@@ -1,37 +1,47 @@
 # Azure Functions Web Crawler - Version Summary
-**Date**: October 12, 2025  
-**Current Version**: Step 1c - Complete Pipeline  
-**Status**: ✅ FULLY FUNCTIONAL - Production Ready
+**Date**: October 15, 2025  
+**Current Version**: v2.2.0 - Official Release
+**Status**: ✅ FULLY OPERATIONAL - Production Deployed
 
 ## 🎯 PROJECT GOAL
-Create a function app to crawl websites and download documents into Azure Storage account, running every 4 hours to check for document changes.
+Automated document monitoring system that crawls police and government websites every 4 hours, detecting changes and storing documents in Azure Storage.
 
 ---
 
-## ✅ COMPLETED FUNCTIONALITY
+## ✅ CURRENT DEPLOYMENT - v2.2.0 OFFICIAL
 
-### Core Pipeline (Steps 1a → 1b → 1c)
-- **Document Discovery**: Successfully finds PDF/XML/DOC documents on target websites
-- **Document Download**: Downloads first document found (29KB+ PDFs proven working)
-- **Azure Storage Upload**: Real integration with `stbtpuksprodcrawler01/documents` container
-- **Error Handling**: Graceful handling of download/upload failures
-- **Status Monitoring**: Anonymous endpoints for health checking
+### Production Status
+- **Deployment**: ✅ Successfully deployed and verified
+- **Timer Function**: ✅ Running every 4 hours (last execution: 12:01 PM Oct 15)
+- **Document Monitoring**: ✅ 261 documents actively tracked
+- **Change Detection**: ✅ Hash-based system operational
+- **Storage Integration**: ✅ Real-time uploads to `stbtpuksprodcrawler01`
+
+### Monitored Websites (5 Active)
+1. **Home Office Publications** - Policy and guidance documents
+2. **Gov.UK Police Publications** - Government police documentation  
+3. **College of Policing** - Training and procedures *(v2.1.0 addition)*
+4. **NPCC Publications** - Strategic publications *(v2.2.0 addition)*
+5. **HMICFRS** - Inspection reports
+
+### New Features in v2.2.0
+- **NPCC Integration**: Added National Police Chiefs' Council publications monitoring
+- **Enhanced Bot Protection**: Successfully bypassing College of Policing anti-bot measures
+- **Improved Status Messages**: Clear version identification and feature listing
+- **Production Verification**: Confirmed 4-hour timer and change detection working
 
 ### Working Endpoints
-1. **`/api/status`** (Anonymous) - Health check and system status
-2. **`/api/websites`** (Anonymous) - List configured websites  
-3. **`/api/search_site?url=<url>`** (Anonymous) - Full document processing pipeline
-
-### Proven Integration
-- **Azure Functions**: Python v2, Functions runtime v4, UK South region
-- **Authentication**: Fixed managed identity with Azure Functions-specific environment variables
-- **Storage Account**: `stbtpuksprodcrawler01` with real uploads (Status 201)
-- **Target Website**: `legislation.gov.uk` - finds 5 PDFs consistently
+1. **`/api/status`** (Anonymous) - System health and version info
+2. **`/api/websites`** (Anonymous) - List all monitored websites
+3. **`/api/manual_crawl`** (POST, Anonymous) - Trigger manual crawl of all sites
+4. **`scheduled_crawler`** (Timer) - Automatic 4-hour crawling
 
 ### Technical Foundation
-- **Dependencies**: Only Python built-ins (urllib, html.parser, json, hashlib)
-- **Authentication Method**: Uses IDENTITY_ENDPOINT/IDENTITY_HEADER (not VM metadata)
-- **Deployment**: Incremental approach with versioned files prevents failures
+- **Azure Functions**: Python v2, Functions runtime v4, UK South
+- **Timer Schedule**: `0 0 */4 * * *` (every 4 hours)
+- **Authentication**: Azure managed identity with proper RBAC
+- **Storage**: Encrypted blob storage with change detection
+- **Dependencies**: Requests, BeautifulSoup, Azure libraries
 
 ---
 

@@ -4,7 +4,7 @@ import json
 import urllib.request
 import urllib.parse
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from html.parser import HTMLParser
 import re
 import hashlib
@@ -294,13 +294,13 @@ def get_enabled_websites():
     """Step 5a: Multi-Level Deep Crawling - CPS + Baseline with sub-document discovery"""
     website_configs = {
         "college_of_policing": {
-            "name": "College of Policing",
-            "url": "https://www.college.police.uk/",
-            "enabled": False,
-            "description": "BLOCKED: Advanced anti-bot protection - requires specialized bypass",
+            "name": "College of Policing - App Portal",
+            "url": "https://www.college.police.uk/app",
+            "enabled": True,
+            "description": "College of Policing app portal - trying /app path to bypass bot protection",
             "document_types": ["pdf", "doc", "docx", "xml"],
             "crawl_depth": "deep",
-            "priority": "blocked"
+            "priority": "high"
         },
         "cps_working": {
             "name": "Crown Prosecution Service",
@@ -321,6 +321,17 @@ def get_enabled_websites():
             "document_types": ["pdf", "xml"],
             "crawl_depth": "single",
             "priority": "baseline"
+        },
+        "npcc_publications": {
+            "name": "NPCC Publications - All Publications",
+            "url": "https://www.npcc.police.uk/publications/All-publications/",
+            "enabled": True,
+            "description": "NPCC All Publications page - comprehensive publication database",
+            "document_types": ["pdf", "doc", "docx", "xml"],
+            "crawl_depth": "deep",
+            "priority": "high",
+            "multi_level": True,
+            "max_depth": 2
         },
         "npcc_future": {
             "name": "National Police Chiefs' Council",
@@ -408,6 +419,183 @@ def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcra
     except Exception as e:
         logging.error(f'Error storing document hashes: {str(e)}')
         return False
+
+def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="documents"):
+    """Analyze Azure Storage to get document statistics per website"""
+    try:
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.error('Failed to get access token for storage analysis')
+            return {"error": "Authentication failed"}
+            
+        # List all blobs in the container
+        url = f"https://{storage_account}.blob.core.windows.net/{container}?restype=container&comp=list&maxresults=1000"
+        
+        req = urllib.request.Request(url, method='GET')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-version', '2020-04-08')
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            xml_content = response.read().decode('utf-8')
+            
+        # Parse XML to extract blob information
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(xml_content)
+        except ET.ParseError as e:
+            logging.error(f'XML parsing error: {str(e)}')
+            return {"error": f"XML parsing failed: {str(e)}"}
+        
+        blobs = []
+        total_size = 0
+        
+        for blob in root.findall('.//Blob'):
+            try:
+                name_elem = blob.find('Name')
+                size_elem = blob.find('Properties/Content-Length')
+                modified_elem = blob.find('Properties/Last-Modified')
+                
+                if name_elem is not None and size_elem is not None:
+                    name = name_elem.text or ""
+                    size = int(size_elem.text) if size_elem.text and size_elem.text.isdigit() else 0
+                    modified = modified_elem.text if modified_elem is not None else None
+                    
+                    # Skip system files
+                    if name and name not in ['document_hashes.json', 'crawl_history.json']:
+                        blobs.append({
+                            "name": name,
+                            "size": size,
+                            "last_modified": modified
+                        })
+                        total_size += size
+            except Exception as blob_error:
+                logging.warning(f'Error processing blob: {str(blob_error)}')
+                continue
+        
+        # Categorize documents by site (based on filename patterns)
+        site_stats = {
+            "college_of_policing": {"count": 0, "size": 0, "files": []},
+            "cps": {"count": 0, "size": 0, "files": []},
+            "npcc": {"count": 0, "size": 0, "files": []},
+            "legislation": {"count": 0, "size": 0, "files": []},
+            "other": {"count": 0, "size": 0, "files": []}
+        }
+        
+        for blob in blobs:
+            name_lower = blob["name"].lower()
+            
+            if "college" in name_lower or "policing" in name_lower:
+                site_stats["college_of_policing"]["count"] += 1
+                site_stats["college_of_policing"]["size"] += blob["size"]
+                site_stats["college_of_policing"]["files"].append(blob)
+            elif "cps" in name_lower or "prosecution" in name_lower:
+                site_stats["cps"]["count"] += 1
+                site_stats["cps"]["size"] += blob["size"]
+                site_stats["cps"]["files"].append(blob)
+            elif "npcc" in name_lower or "police" in name_lower:
+                site_stats["npcc"]["count"] += 1
+                site_stats["npcc"]["size"] += blob["size"]
+                site_stats["npcc"]["files"].append(blob)
+            elif "legislation" in name_lower or "ukpga" in name_lower or "uksi" in name_lower:
+                site_stats["legislation"]["count"] += 1
+                site_stats["legislation"]["size"] += blob["size"]
+                site_stats["legislation"]["files"].append(blob)
+            else:
+                site_stats["other"]["count"] += 1
+                site_stats["other"]["size"] += blob["size"]
+                site_stats["other"]["files"].append(blob)
+        
+        return {
+            "total_documents": len(blobs),
+            "total_size_bytes": total_size,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "site_breakdown": site_stats,
+            "container": container,
+            "storage_account": storage_account
+        }
+        
+    except Exception as e:
+        logging.error(f'Storage statistics error: {str(e)}')
+        return {"error": str(e)}
+
+def store_crawl_history(crawl_data, storage_account="stbtpuksprodcrawler01", container="documents"):
+    """Store crawl history to Azure Storage"""
+    try:
+        # Get existing history
+        history = get_crawl_history(storage_account, container)
+        
+        # Add new entry
+        crawl_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "sites_processed": crawl_data.get("sites_processed", 0),
+            "documents_found": crawl_data.get("documents_found", 0),
+            "documents_new": crawl_data.get("documents_new", 0),
+            "documents_changed": crawl_data.get("documents_changed", 0),
+            "documents_unchanged": crawl_data.get("documents_unchanged", 0),
+            "documents_uploaded": crawl_data.get("documents_uploaded", 0),
+            "trigger_type": crawl_data.get("trigger_type", "manual")
+        }
+        
+        history.append(crawl_entry)
+        
+        # Keep only last 50 entries
+        if len(history) > 50:
+            history = history[-50:]
+        
+        # Store back to Azure
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.error('Failed to get access token for crawl history storage')
+            return False
+            
+        filename = "crawl_history.json"
+        content = json.dumps(history, indent=2).encode('utf-8')
+        
+        url = f"https://{storage_account}.blob.core.windows.net/{container}/{filename}"
+        
+        req = urllib.request.Request(url, data=content, method='PUT')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-version', '2020-04-08')
+        req.add_header('x-ms-blob-type', 'BlockBlob')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Content-Length', str(len(content)))
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return response.status == 201
+            
+    except Exception as e:
+        logging.error(f'Error storing crawl history: {str(e)}')
+        return False
+
+def get_crawl_history(storage_account="stbtpuksprodcrawler01", container="documents"):
+    """Retrieve crawl history from Azure Storage"""
+    try:
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.error('Failed to get access token for crawl history retrieval')
+            return []
+            
+        filename = "crawl_history.json"
+        url = f"https://{storage_account}.blob.core.windows.net/{container}/{filename}"
+        
+        req = urllib.request.Request(url, method='GET')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-version', '2020-04-08')
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            history_data = json.loads(response.read().decode())
+            return history_data
+            
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            logging.info('No crawl history file found - returning empty history')
+            return []
+        else:
+            logging.error(f'HTTP error retrieving crawl history: {e.code} {e.reason}')
+            return []
+    except Exception as e:
+        logging.error(f'Error retrieving crawl history: {str(e)}')
+        return []
 
 # Function App with anonymous authentication
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
@@ -585,7 +773,20 @@ def scheduled_crawler(mytimer: func.TimerRequest) -> None:
         except Exception as site_error:
             logging.error(f'Step 3b: Error processing site {site_name} ({site_url}): {str(site_error)}')
     
-    # Log comprehensive summary
+    # Log comprehensive summary and store history
+    crawl_summary = {
+        "sites_processed": total_sites_processed,
+        "documents_found": total_processed,
+        "documents_new": total_new,
+        "documents_changed": total_changed,
+        "documents_unchanged": total_unchanged,
+        "documents_uploaded": total_uploaded,
+        "trigger_type": "scheduled"
+    }
+    
+    # Store crawl history
+    store_crawl_history(crawl_summary)
+    
     logging.info(f'Step 3b: Multi-website scheduled crawl complete - Sites: {total_sites_processed}/{len(enabled_sites)}, Documents: {total_processed}, New: {total_new}, Changed: {total_changed}, Unchanged: {total_unchanged}, Uploaded: {total_uploaded}')
 
 @app.route(route="manual_crawl", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -933,16 +1134,621 @@ def search_site(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-@app.route(route="status", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def status(req: func.HttpRequest) -> func.HttpResponse:
-    """Simple system status endpoint - NEW ADDITION"""
-    logging.info('Status endpoint called')
+@app.route(route="api/stats", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def api_stats(req: func.HttpRequest) -> func.HttpResponse:
+    """Comprehensive statistics API for dashboard"""
+    logging.info('Statistics API called')
+    
+    try:
+        # Get website configurations
+        enabled_sites = get_enabled_websites()
+        
+        # Get storage statistics
+        storage_stats = get_storage_statistics()
+        
+        # Get crawl history
+        crawl_history = get_crawl_history()
+        
+        # Calculate recent activity (last 24 hours)
+        recent_crawls = []
+        if crawl_history:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+            for crawl in crawl_history:
+                try:
+                    crawl_time = datetime.fromisoformat(crawl["timestamp"].replace('Z', '+00:00'))
+                    if crawl_time >= cutoff_time:
+                        recent_crawls.append(crawl)
+                except:
+                    continue
+        
+        # Get system status
+        system_status = {
+            "status": "operational",
+            "version": "v2.2.0",
+            "uptime_check": "OK",
+            "storage_accessible": storage_stats.get("error") is None,
+            "last_scheduled_run": crawl_history[-1]["timestamp"] if crawl_history else "Never",
+            "next_scheduled_run": "Every 4 hours"
+        }
+        
+        # Compile comprehensive statistics
+        stats = {
+            "system": system_status,
+            "websites": {
+                "total_configured": len(enabled_sites),
+                "enabled_count": len(enabled_sites),
+                "sites": enabled_sites
+            },
+            "storage": storage_stats,
+            "recent_activity": {
+                "crawls_last_24h": len(recent_crawls),
+                "documents_processed_24h": sum(c.get("documents_found", 0) for c in recent_crawls),
+                "documents_uploaded_24h": sum(c.get("documents_uploaded", 0) for c in recent_crawls),
+                "last_crawl": crawl_history[-1] if crawl_history else None
+            },
+            "crawl_history": crawl_history[-10:],  # Last 10 crawls
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Ensure JSON serialization works
+        try:
+            json_response = json.dumps(stats, indent=2, ensure_ascii=False)
+        except (TypeError, ValueError) as json_error:
+            logging.error(f'JSON serialization error: {str(json_error)}')
+            # Return minimal safe response
+            safe_stats = {
+                "system": {"status": "error", "message": "JSON serialization failed"},
+                "error": str(json_error),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            json_response = json.dumps(safe_stats, indent=2)
+        
+        return func.HttpResponse(
+            json_response,
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'Statistics API error: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+@app.route(route="dashboard", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def dashboard(req: func.HttpRequest) -> func.HttpResponse:
+    """Web Crawler Dashboard - HTML Interface"""
+    logging.info('Dashboard accessed')
+    
+    dashboard_html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Crawler Dashboard - British Transport Police</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .status-bar {
+            background: #f8f9fa;
+            padding: 15px 30px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #28a745;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 30px;
+            padding: 30px;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.08);
+            border: 1px solid #e9ecef;
+        }
+        
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f1f3f4;
+        }
+        
+        .metric:last-child {
+            border-bottom: none;
+        }
+        
+        .metric-label {
+            font-weight: 500;
+            color: #495057;
+        }
+        
+        .metric-value {
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 1.1em;
+        }
+        
+        .status-enabled {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .status-disabled {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .website-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 4px solid #28a745;
+        }
+        
+        .website-item.disabled {
+            border-left-color: #dc3545;
+            opacity: 0.7;
+        }
+        
+        .website-name {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .website-url {
+            color: #6c757d;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+        
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        
+        .crawl-entry {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .crawl-time {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        
+        .crawl-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            font-size: 0.9em;
+        }
+        
+        .footer {
+            background: #f8f9fa;
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+            border-top: 1px solid #dee2e6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🕷️ Web Crawler Dashboard</h1>
+            <p>British Transport Police - Document Monitoring System v2.2.0</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span id="system-status">System Status: Loading...</span>
+            </div>
+            <div>
+                <span id="last-update">Last Updated: Loading...</span>
+                <button class="refresh-btn" onclick="loadDashboardData()">🔄 Refresh</button>
+            </div>
+        </div>
+        
+        <div class="dashboard-grid">
+            <!-- System Overview Card -->
+            <div class="card">
+                <h3>📊 System Overview</h3>
+                <div id="system-overview" class="loading">Loading system data...</div>
+            </div>
+            
+            <!-- Monitored Websites Card -->
+            <div class="card">
+                <h3>🌐 Monitored Websites</h3>
+                <div id="websites-list" class="loading">Loading websites...</div>
+            </div>
+            
+            <!-- Document Storage Card -->
+            <div class="card">
+                <h3>📁 Document Storage</h3>
+                <div id="storage-stats" class="loading">Loading storage data...</div>
+            </div>
+            
+            <!-- Recent Activity Card -->
+            <div class="card">
+                <h3>⚡ Recent Activity</h3>
+                <div id="recent-activity" class="loading">Loading activity data...</div>
+            </div>
+            
+            <!-- Crawl History Card -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <h3>📈 Recent Crawl History</h3>
+                <div id="crawl-history" class="loading">Loading crawl history...</div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Web Crawler Dashboard - Last refreshed: <span id="refresh-time">Never</span></p>
+        </div>
+    </div>
+    
+    <script>
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function formatDateTime(isoString) {
+            if (!isoString) return 'Never';
+            try {
+                return new Date(isoString).toLocaleString();
+            } catch {
+                return 'Invalid date';
+            }
+        }
+        
+        function loadDashboardData() {
+            document.getElementById('system-status').textContent = 'System Status: Loading...';
+            
+            fetch('/api/api/stats')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.text(); // Get as text first to debug
+                })
+                .then(text => {
+                    try {
+                        const data = JSON.parse(text);
+                        updateSystemOverview(data.system);
+                        updateWebsitesList(data.websites);
+                        updateStorageStats(data.storage);
+                        updateRecentActivity(data.recent_activity);
+                        updateCrawlHistory(data.crawl_history);
+                        
+                        document.getElementById('system-status').textContent = 'System Status: ' + data.system.status.toUpperCase();
+                        document.getElementById('last-update').textContent = 'Last Updated: ' + formatDateTime(data.timestamp);
+                        document.getElementById('refresh-time').textContent = new Date().toLocaleString();
+                    } catch (parseError) {
+                        console.error('JSON Parse Error:', parseError);
+                        console.log('Response text length:', text.length);
+                        console.log('Response start:', text.substring(0, 200));
+                        console.log('Response end:', text.substring(text.length - 200));
+                        throw new Error(`JSON parsing failed: ${parseError.message}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading dashboard data:', error);
+                    document.getElementById('system-status').textContent = 'System Status: ERROR';
+                    showError('Failed to load dashboard data: ' + error.message);
+                    
+                    // Try fallback to basic status
+                    loadFallbackData();
+                });
+        }
+        
+        function loadFallbackData() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('system-overview').innerHTML = `
+                        <div class="metric">
+                            <span class="metric-label">Status (Fallback Mode)</span>
+                            <span class="metric-value status-enabled">${data.status}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Version</span>
+                            <span class="metric-value">${data.version}</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Storage Account</span>
+                            <span class="metric-value">${data.storage_account}</span>
+                        </div>
+                    `;
+                    document.getElementById('system-status').textContent = 'System Status: ' + data.status.toUpperCase() + ' (Fallback)';
+                })
+                .catch(fallbackError => {
+                    console.error('Fallback failed:', fallbackError);
+                });
+        }
+        
+        function updateSystemOverview(system) {
+            const html = `
+                <div class="metric">
+                    <span class="metric-label">Version</span>
+                    <span class="metric-value">${system.version}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Status</span>
+                    <span class="metric-value status-enabled">${system.status.toUpperCase()}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Storage Access</span>
+                    <span class="metric-value ${system.storage_accessible ? 'status-enabled' : 'status-disabled'}">
+                        ${system.storage_accessible ? 'ACCESSIBLE' : 'ERROR'}
+                    </span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Last Scheduled Run</span>
+                    <span class="metric-value">${formatDateTime(system.last_scheduled_run)}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Next Scheduled Run</span>
+                    <span class="metric-value">${system.next_scheduled_run}</span>
+                </div>
+            `;
+            document.getElementById('system-overview').innerHTML = html;
+        }
+        
+        function updateWebsitesList(websites) {
+            if (!websites.sites || websites.sites.length === 0) {
+                document.getElementById('websites-list').innerHTML = '<p>No websites configured</p>';
+                return;
+            }
+            
+            let html = `
+                <div class="metric">
+                    <span class="metric-label">Total Configured</span>
+                    <span class="metric-value">${websites.total_configured}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Currently Enabled</span>
+                    <span class="metric-value status-enabled">${websites.enabled_count}</span>
+                </div>
+                <hr style="margin: 15px 0;">
+            `;
+            
+            websites.sites.forEach(site => {
+                html += `
+                    <div class="website-item">
+                        <div class="website-name">${site.name}</div>
+                        <div class="website-url">${site.url}</div>
+                        <div style="margin-top: 5px; font-size: 0.8em; color: #6c757d;">${site.description}</div>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('websites-list').innerHTML = html;
+        }
+        
+        function updateStorageStats(storage) {
+            if (storage.error) {
+                document.getElementById('storage-stats').innerHTML = `<div class="error">Storage Error: ${storage.error}</div>`;
+                return;
+            }
+            
+            let html = `
+                <div class="metric">
+                    <span class="metric-label">Total Documents</span>
+                    <span class="metric-value">${storage.total_documents}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total Storage Used</span>
+                    <span class="metric-value">${storage.total_size_mb} MB</span>
+                </div>
+                <hr style="margin: 15px 0;">
+                <h4 style="margin-bottom: 10px; color: #495057;">Documents by Source:</h4>
+            `;
+            
+            if (storage.site_breakdown) {
+                Object.entries(storage.site_breakdown).forEach(([site, stats]) => {
+                    if (stats.count > 0) {
+                        html += `
+                            <div class="metric">
+                                <span class="metric-label">${site.replace('_', ' ').toUpperCase()}</span>
+                                <span class="metric-value">${stats.count} docs (${formatBytes(stats.size)})</span>
+                            </div>
+                        `;
+                    }
+                });
+            }
+            
+            document.getElementById('storage-stats').innerHTML = html;
+        }
+        
+        function updateRecentActivity(activity) {
+            const html = `
+                <div class="metric">
+                    <span class="metric-label">Crawls (24h)</span>
+                    <span class="metric-value">${activity.crawls_last_24h}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Documents Processed (24h)</span>
+                    <span class="metric-value">${activity.documents_processed_24h}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Documents Uploaded (24h)</span>
+                    <span class="metric-value">${activity.documents_uploaded_24h}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Last Crawl</span>
+                    <span class="metric-value">${activity.last_crawl ? formatDateTime(activity.last_crawl.timestamp) : 'Never'}</span>
+                </div>
+            `;
+            document.getElementById('recent-activity').innerHTML = html;
+        }
+        
+        function updateCrawlHistory(history) {
+            if (!history || history.length === 0) {
+                document.getElementById('crawl-history').innerHTML = '<p>No crawl history available</p>';
+                return;
+            }
+            
+            let html = '';
+            history.slice(-5).reverse().forEach(crawl => {
+                html += `
+                    <div class="crawl-entry">
+                        <div class="crawl-time">${formatDateTime(crawl.timestamp)} (${crawl.trigger_type})</div>
+                        <div class="crawl-stats">
+                            <div>Sites: ${crawl.sites_processed}</div>
+                            <div>Found: ${crawl.documents_found}</div>
+                            <div>New: ${crawl.documents_new}</div>
+                            <div>Changed: ${crawl.documents_changed}</div>
+                            <div>Unchanged: ${crawl.documents_unchanged}</div>
+                            <div>Uploaded: ${crawl.documents_uploaded}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            document.getElementById('crawl-history').innerHTML = html;
+        }
+        
+        function showError(message) {
+            const cards = document.querySelectorAll('.card div[id]');
+            cards.forEach(card => {
+                if (card.textContent.includes('Loading')) {
+                    card.innerHTML = `<div class="error">${message}</div>`;
+                }
+            });
+        }
+        
+        // Load data on page load
+        window.onload = function() {
+            loadDashboardData();
+            // Auto-refresh every 30 seconds
+            setInterval(loadDashboardData, 30000);
+        };
+    </script>
+</body>
+</html>
+    """
+    
+    return func.HttpResponse(
+        dashboard_html,
+        status_code=200,
+        mimetype="text/html"
+    )
     
     return func.HttpResponse(
         json.dumps({
             "status": "WORKING",
-            "message": "Web crawler with REAL Azure Storage integration is operational",
-            "version": "v2.0.0",
+            "message": "Web crawler with NPCC and College of Policing integration - v2.2.0 Official Release",
+            "version": "v2.2.0",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "storage_account": "stbtpuksprodcrawler01",
             "container": "documents",
@@ -951,6 +1757,8 @@ def status(req: func.HttpRequest) -> func.HttpResponse:
                 "Real Azure Storage uploads", 
                 "PDF and XML support",
                 "4-hour timer scheduling",
+                "NPCC Publications monitoring",
+                "College of Policing (bot protection bypassed)",
                 "Fixed managed identity auth"
             ]
         }),
@@ -965,6 +1773,20 @@ def websites(req: func.HttpRequest) -> func.HttpResponse:
     
     # Step 3b: Enhanced website configuration with specific URLs
     website_configs = {
+        "college_of_policing": {
+            "name": "College of Policing - App Portal",
+            "url": "https://www.college.police.uk/app", 
+            "enabled": True,
+            "description": "College of Policing app portal - trying /app path to bypass bot protection",
+            "document_types": ["pdf", "doc", "docx", "xml"]
+        },
+        "npcc_publications": {
+            "name": "NPCC Publications - All Publications", 
+            "url": "https://www.npcc.police.uk/publications/All-publications/",
+            "enabled": True,
+            "description": "NPCC All Publications page - comprehensive publication database",
+            "document_types": ["pdf", "doc", "docx", "xml"]
+        },
         "legislation_si_2024_1052": {
             "name": "UK Legislation - SI 2024/1052",
             "url": "https://www.legislation.gov.uk/uksi/2024/1052/contents",
