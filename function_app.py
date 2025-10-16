@@ -290,8 +290,56 @@ def get_document_hashes_from_storage(storage_account="stbtpuksprodcrawler01", co
         logging.error(f'Error retrieving document hashes: {str(e)}')
         return {}
 
+def load_websites_config():
+    """Load website configurations from websites.json file
+    
+    Returns:
+        dict: Configuration data with version, description, and websites list
+    """
+    try:
+        # Determine config location (local or Azure)
+        config_location = os.environ.get('WEBSITES_CONFIG_LOCATION', 'local')
+        
+        if config_location == 'local':
+            # Read from local file system
+            config_path = os.path.join(os.path.dirname(__file__), 'websites.json')
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+            logging.info(f'Loaded website config from local file: {config_path}')
+        else:
+            # Future: Load from Azure Storage or other sources
+            logging.warning('Azure storage config loading not yet implemented, falling back to local')
+            config_path = os.path.join(os.path.dirname(__file__), 'websites.json')
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+        
+        return config_data
+        
+    except FileNotFoundError:
+        logging.error('websites.json file not found, returning empty configuration')
+        return {"version": "0.0.0", "websites": []}
+    except json.JSONDecodeError as e:
+        logging.error(f'Invalid JSON in websites.json: {str(e)}')
+        return {"version": "0.0.0", "websites": []}
+    except Exception as e:
+        logging.error(f'Error loading website configuration: {str(e)}')
+        return {"version": "0.0.0", "websites": []}
+
 def get_enabled_websites():
-    """Step 5a: Multi-Level Deep Crawling - CPS + Baseline with sub-document discovery"""
+    """Get list of enabled websites from configuration
+    
+    Returns:
+        list: List of enabled website configurations
+    """
+    config_data = load_websites_config()
+    enabled_sites = [site for site in config_data.get('websites', []) if site.get('enabled', False)]
+    logging.info(f'Found {len(enabled_sites)} enabled websites from config version {config_data.get("version", "unknown")}')
+    return enabled_sites
+
+def get_enabled_websites_legacy():
+    """DEPRECATED - Legacy hardcoded configuration (kept for reference)
+    Use load_websites_config() and get_enabled_websites() instead
+    """
     website_configs = {
         "college_of_policing": {
             "name": "College of Policing - App Portal",
@@ -384,6 +432,184 @@ def get_enabled_websites():
             })
     
     return enabled_sites
+
+def crawl_website_core(site_config, previous_hashes=None):
+    """Core website crawling logic extracted for reusability
+    
+    Args:
+        site_config (dict): Website configuration with url, name, multi_level settings
+        previous_hashes (dict): Previously stored document hashes for change detection
+    
+    Returns:
+        dict: Crawl results including documents found, processed, new, changed, uploaded
+    """
+    site_url = site_config["url"]
+    site_name = site_config["name"]
+    
+    result = {
+        "site_name": site_name,
+        "site_url": site_url,
+        "status": "unknown",
+        "documents_found": 0,
+        "documents_processed": 0,
+        "documents_new": 0,
+        "documents_changed": 0,
+        "documents_unchanged": 0,
+        "documents_uploaded": 0,
+        "current_hashes": {},
+        "error": None
+    }
+    
+    try:
+        logging.info(f'Crawling site: {site_name} ({site_url})')
+        
+        # Advanced headers with Chrome security context
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-GB,en;q=0.9',
+            'Sec-Ch-Ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'Connection': 'keep-alive',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        req = urllib.request.Request(site_url, headers=headers)
+        
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                # Handle gzipped responses
+                raw_content = response.read()
+                if response.info().get('Content-Encoding') == 'gzip':
+                    content = gzip.decompress(raw_content).decode('utf-8')
+                else:
+                    content = raw_content.decode('utf-8')
+                
+                parse_result = find_documents_in_html(content, site_url)
+                
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                logging.warning(f'Site {site_name} blocked (403) - anti-bot protection')
+                result["status"] = "blocked"
+                result["error"] = "HTTP 403 - Anti-bot protection"
+                return result
+            else:
+                raise
+        
+        all_documents = parse_result["documents"]
+        logging.info(f'Found {len(all_documents)} Level 1 documents on {site_name}')
+        
+        # Multi-level crawling if enabled
+        if site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
+            max_depth = site_config.get("max_depth", 2)
+            logging.info(f'Starting multi-level crawl for {site_name} (max depth: {max_depth})')
+            
+            level1_count = len(all_documents)
+            sub_documents_found = 0
+            
+            # Crawl first 3 Level 1 documents for sub-documents (safety limit)
+            for level1_doc in all_documents[:3]:
+                try:
+                    sub_docs = crawl_document_page_for_sub_documents(
+                        level1_doc["url"],
+                        site_url,
+                        max_depth=max_depth,
+                        current_depth=1
+                    )
+                    all_documents.extend(sub_docs)
+                    sub_documents_found += len(sub_docs)
+                    
+                    # Be respectful - add delay
+                    import time
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    logging.warning(f'Failed to crawl sub-docs for {level1_doc["url"]}: {str(e)}')
+                    continue
+            
+            logging.info(f'Multi-level crawl complete - {level1_count} Level 1 + {sub_documents_found} Level 2+ = {len(all_documents)} total')
+        
+        result["documents_found"] = len(all_documents)
+        
+        if not all_documents:
+            result["status"] = "no_documents"
+            return result
+        
+        # Use provided hashes or get from storage
+        if previous_hashes is None:
+            previous_hashes = get_document_hashes_from_storage()
+        
+        current_hashes = {}
+        
+        # Process documents with change detection
+        for i, doc in enumerate(all_documents):
+            try:
+                logging.info(f'Processing document {i+1}/{len(all_documents)} - {doc["filename"]}')
+                
+                # Download document
+                download_result = download_document(doc["url"])
+                
+                if download_result["success"]:
+                    current_hash = calculate_content_hash(download_result["content"])
+                    current_hashes[doc["url"]] = {
+                        "filename": doc["filename"],
+                        "hash": current_hash,
+                        "last_seen": datetime.now(timezone.utc).isoformat()
+                    }
+                    
+                    # Determine document status
+                    previous_hash = previous_hashes.get(doc["url"], {}).get("hash")
+                    
+                    if previous_hash is None:
+                        status = "new"
+                        result["documents_new"] += 1
+                        should_upload = True
+                    elif previous_hash != current_hash:
+                        status = "changed"
+                        result["documents_changed"] += 1
+                        should_upload = True
+                    else:
+                        status = "unchanged"
+                        result["documents_unchanged"] += 1
+                        should_upload = False
+                    
+                    result["documents_processed"] += 1
+                    
+                    # Upload if new or changed
+                    if should_upload:
+                        storage_result = upload_to_blob_storage_real(
+                            download_result["content"],
+                            doc["filename"]
+                        )
+                        if storage_result["success"]:
+                            result["documents_uploaded"] += 1
+                            logging.info(f'Uploaded {doc["filename"]} - Status: {status}')
+                        else:
+                            logging.error(f'Upload failed for {doc["filename"]} - {storage_result.get("error", "Unknown")}')
+                    else:
+                        logging.info(f'Skipped upload for {doc["filename"]} - Status: {status}')
+                        
+                else:
+                    logging.error(f'Download failed for {doc["filename"]} - {download_result["error"]}')
+                    
+            except Exception as doc_error:
+                logging.error(f'Error processing document {doc["filename"]}: {str(doc_error)}')
+        
+        result["current_hashes"] = current_hashes
+        result["status"] = "success"
+        
+    except Exception as site_error:
+        logging.error(f'Error crawling site {site_name}: {str(site_error)}')
+        result["status"] = "error"
+        result["error"] = str(site_error)
+    
+    return result
 
 def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcrawler01", container="documents"):
     """Store document hashes to Azure Storage for change detection - using existing documents container"""
@@ -607,10 +833,11 @@ def scheduled_crawler(mytimer: func.TimerRequest) -> None:
     """Step 5a: Timer trigger function with multi-level crawling every 4 hours"""
     logging.info('Step 3b: Scheduled multi-website crawler started - 4-hour automated crawling with change detection!')
     
-    # Step 3b: Get enabled websites from configuration
+    # REFACTORED: Get enabled websites from configuration file
     enabled_sites = get_enabled_websites()
     logging.info(f'Step 3b: Found {len(enabled_sites)} enabled websites to process')
     
+    # Initialize counters
     total_processed = 0
     total_new = 0
     total_changed = 0
@@ -619,159 +846,49 @@ def scheduled_crawler(mytimer: func.TimerRequest) -> None:
     total_sites_processed = 0
     site_results = []
     
+    # Get hashes once for all sites (efficiency improvement)
+    previous_hashes = get_document_hashes_from_storage()
+    all_current_hashes = {}
+    
+    # Process each enabled website
     for site_config in enabled_sites:
-        site_url = site_config["url"]
-        site_name = site_config["name"]
         total_sites_processed += 1
-        try:
-            logging.info(f'Step 4a: Processing site {total_sites_processed}/{len(enabled_sites)} - {site_name} ({site_url})')
-            
-            # Advanced headers with Chrome security context for government/police sites
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Language': 'en-GB,en;q=0.9',
-                'Sec-Ch-Ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1',
-                'Connection': 'keep-alive',
-                'Cache-Control': 'max-age=0'
-            }
-            
-            req = urllib.request.Request(site_url, headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=15) as response:
-                    # Handle gzipped responses properly
-                    raw_content = response.read()
-                    if response.info().get('Content-Encoding') == 'gzip':
-                        content = gzip.decompress(raw_content).decode('utf-8')
-                    else:
-                        content = raw_content.decode('utf-8')
-                    result = find_documents_in_html(content, site_url)
-            except urllib.error.HTTPError as e:
-                if e.code == 403:
-                    logging.warning(f'Step 4a: Site {site_name} blocked (403) - government anti-bot protection')
-                    site_results.append({
-                        "site_name": site_name,
-                        "site_url": site_url,
-                        "status": "blocked",
-                        "error": "HTTP 403 - Anti-bot protection",
-                        "documents_found": 0,
-                        "suggestion": "Site requires advanced bypass techniques"
-                    })
-                    continue
-                else:
-                    raise
-            
-            all_documents = result["documents"]
-            logging.info(f'Step 5a: Found {len(all_documents)} Level 1 documents on {site_name}')
-            
-            # Step 5a: Multi-level crawling if enabled
-            if site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
-                max_depth = site_config.get("max_depth", 2)  
-                logging.info(f'Step 5a: Starting multi-level crawl for {site_name} (max depth: {max_depth})')
-                
-                # Crawl each Level 1 document for sub-documents  
-                level1_count = len(all_documents)
-                sub_documents_found = 0
-                
-                for level1_doc in all_documents[:3]:  # Limit to first 3 for safety and testing
-                    try:
-                        sub_docs = crawl_document_page_for_sub_documents(
-                            level1_doc["url"], 
-                            site_url, 
-                            max_depth=max_depth, 
-                            current_depth=1
-                        )
-                        all_documents.extend(sub_docs)
-                        sub_documents_found += len(sub_docs)
-                        
-                        # Add small delay to be respectful
-                        import time
-                        time.sleep(1)
-                        
-                    except Exception as e:
-                        logging.warning(f'Step 5a: Failed to crawl sub-docs for {level1_doc["url"]}: {str(e)}')
-                        continue
-                
-                logging.info(f'Step 5a: Multi-level crawl complete - {level1_count} Level 1 + {sub_documents_found} Level 2+ = {len(all_documents)} total documents')
-            
-            if not all_documents:
-                continue
-                
-            # Step 5a: Get previous document hashes for change detection
-            previous_hashes = get_document_hashes_from_storage()
-            current_hashes = {}
-            
-            # Process all documents (Level 1 + Level 2+) with change detection
-            for i, doc in enumerate(all_documents):
-                try:
-                    logging.info(f'Step 5a: Processing document {i+1}/{len(all_documents)} from {site_name} - {doc["filename"]}')
-                    
-                    # Download to get current hash
-                    download_result = download_document(doc["url"])
-                    
-                    if download_result["success"]:
-                        current_hash = calculate_content_hash(download_result["content"])
-                        current_hashes[doc["url"]] = {
-                            "filename": doc["filename"],
-                            "hash": current_hash,
-                            "last_seen": datetime.now(timezone.utc).isoformat()
-                        }
-                        
-                        # Check if document has changed
-                        previous_hash = previous_hashes.get(doc["url"], {}).get("hash")
-                        
-                        if previous_hash is None:
-                            # New document
-                            status = "new"
-                            total_new += 1
-                            should_upload = True
-                        elif previous_hash != current_hash:
-                            # Changed document  
-                            status = "changed"
-                            total_changed += 1
-                            should_upload = True
-                        else:
-                            # Unchanged document
-                            status = "unchanged"
-                            total_unchanged += 1
-                            should_upload = False
-                        
-                        total_processed += 1
-                        
-                        # Only upload if document is new or changed
-                        if should_upload:
-                            storage_result = upload_to_blob_storage_real(download_result["content"], doc["filename"])
-                            if storage_result["success"]:
-                                total_uploaded += 1
-                                logging.info(f'Step 3b: Uploaded {doc["filename"]} from {site_name} - Status: {status}')
-                            else:
-                                logging.error(f'Step 3b: Upload failed for {doc["filename"]} from {site_name} - {storage_result.get("error", "Unknown error")}')
-                        else:
-                            logging.info(f'Step 3b: Skipped upload for {doc["filename"]} from {site_name} - Status: {status}')
-                            
-                    else:
-                        logging.error(f'Step 3b: Download failed for {doc["filename"]} from {site_name} - {download_result["error"]}')
-                        
-                except Exception as doc_error:
-                    logging.error(f'Step 3b: Error processing document {doc["filename"]} from {site_name}: {str(doc_error)}')
-            
-            # Store updated hashes for next run
-            if current_hashes:
-                store_success = store_document_hashes_to_storage(current_hashes)
-                if store_success:
-                    logging.info(f'Step 3b: Successfully stored {len(current_hashes)} document hashes for {site_name}')
-                else:
-                    logging.error(f'Step 3b: Failed to store document hashes for {site_name}')
-                    
-        except Exception as site_error:
-            logging.error(f'Step 3b: Error processing site {site_name} ({site_url}): {str(site_error)}')
+        logging.info(f'Step 4a: Processing site {total_sites_processed}/{len(enabled_sites)} - {site_config["name"]}')
+        
+        # REFACTORED: Use core crawling function
+        crawl_result = crawl_website_core(site_config, previous_hashes)
+        
+        # Aggregate results
+        total_processed += crawl_result["documents_processed"]
+        total_new += crawl_result["documents_new"]
+        total_changed += crawl_result["documents_changed"]
+        total_unchanged += crawl_result["documents_unchanged"]
+        total_uploaded += crawl_result["documents_uploaded"]
+        
+        # Merge current hashes
+        all_current_hashes.update(crawl_result["current_hashes"])
+        
+        # Track site results
+        site_results.append({
+            "site_name": crawl_result["site_name"],
+            "site_url": crawl_result["site_url"],
+            "status": crawl_result["status"],
+            "documents_found": crawl_result["documents_found"],
+            "documents_processed": crawl_result["documents_processed"],
+            "documents_uploaded": crawl_result["documents_uploaded"],
+            "error": crawl_result.get("error")
+        })
+        
+        logging.info(f'Site {site_config["name"]} complete - Found: {crawl_result["documents_found"]}, '
+                    f'Processed: {crawl_result["documents_processed"]}, Uploaded: {crawl_result["documents_uploaded"]}')
+    
+    # Store all updated hashes once at the end (efficiency improvement)
+    if all_current_hashes:
+        store_success = store_document_hashes_to_storage(all_current_hashes)
+        if store_success:
+            logging.info(f'Successfully stored {len(all_current_hashes)} document hashes for all sites')
+        else:
+            logging.error('Failed to store document hashes')
     
     # Log comprehensive summary and store history
     crawl_summary = {
