@@ -1,4 +1,5 @@
 import azure.functions as func
+import azure.durable_functions as df
 import logging
 import json
 import urllib.request
@@ -823,8 +824,268 @@ def get_crawl_history(storage_account="stbtpuksprodcrawler01", container="docume
         logging.error(f'Error retrieving crawl history: {str(e)}')
         return []
 
+# ============================================================================
+# DURABLE FUNCTIONS - ORCHESTRATOR AND ACTIVITY FUNCTIONS
+# ============================================================================
+
+def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
+    """
+    Durable Functions Orchestrator for parallel website crawling
+    
+    This orchestrator:
+    1. Loads website configurations
+    2. Fans out to multiple activity functions (one per website)
+    3. Runs crawls in parallel for maximum efficiency
+    4. Aggregates results from all crawls
+    5. Stores combined hashes and crawl history
+    
+    Returns:
+        dict: Aggregated results from all website crawls
+    """
+    logging.info('🚀 Durable Orchestrator: Starting parallel website crawl orchestration')
+    
+    # Get start time from orchestration input or use current time
+    orchestration_start = context.current_utc_datetime
+    
+    # Activity 1: Load website configurations
+    logging.info('📋 Step 1: Loading website configurations')
+    config_data = yield context.call_activity('get_configuration_activity')
+    
+    enabled_sites = [site for site in config_data.get('websites', []) if site.get('enabled', False)]
+    logging.info(f'📊 Found {len(enabled_sites)} enabled websites to crawl')
+    
+    if not enabled_sites:
+        logging.warning('⚠️ No enabled websites found in configuration')
+        return {
+            "success": False,
+            "error": "No enabled websites found",
+            "sites_processed": 0,
+            "orchestration_id": context.instance_id
+        }
+    
+    # Activity 2: Get previous hashes once (efficiency)
+    logging.info('🔍 Step 2: Retrieving previous document hashes for change detection')
+    previous_hashes = yield context.call_activity('get_document_hashes_activity')
+    
+    # Step 3: Fan-out to parallel activity functions (one per website)
+    logging.info(f'🌐 Step 3: Fanning out to {len(enabled_sites)} parallel website crawl activities')
+    
+    crawl_tasks = []
+    for site_config in enabled_sites:
+        # Prepare input for each activity (includes site config and previous hashes)
+        activity_input = {
+            "site_config": site_config,
+            "previous_hashes": previous_hashes
+        }
+        task = context.call_activity('crawl_single_website_activity', activity_input)
+        crawl_tasks.append(task)
+    
+    # Wait for all parallel crawls to complete
+    crawl_results = yield context.task_all(crawl_tasks)
+    
+    # Step 4: Aggregate results
+    logging.info('📈 Step 4: Aggregating results from all website crawls')
+    
+    total_documents_found = 0
+    total_documents_processed = 0
+    total_documents_new = 0
+    total_documents_changed = 0
+    total_documents_unchanged = 0
+    total_documents_uploaded = 0
+    successful_sites = 0
+    failed_sites = 0
+    blocked_sites = 0
+    all_current_hashes = {}
+    site_summaries = []
+    
+    for result in crawl_results:
+        total_documents_found += result.get("documents_found", 0)
+        total_documents_processed += result.get("documents_processed", 0)
+        total_documents_new += result.get("documents_new", 0)
+        total_documents_changed += result.get("documents_changed", 0)
+        total_documents_unchanged += result.get("documents_unchanged", 0)
+        total_documents_uploaded += result.get("documents_uploaded", 0)
+        
+        # Track status
+        status = result.get("status", "unknown")
+        if status == "success":
+            successful_sites += 1
+        elif status == "blocked":
+            blocked_sites += 1
+        elif status == "error":
+            failed_sites += 1
+        
+        # Merge hashes
+        all_current_hashes.update(result.get("current_hashes", {}))
+        
+        # Track site summary
+        site_summaries.append({
+            "site_name": result.get("site_name"),
+            "site_url": result.get("site_url"),
+            "status": status,
+            "documents_found": result.get("documents_found", 0),
+            "documents_uploaded": result.get("documents_uploaded", 0),
+            "error": result.get("error")
+        })
+    
+    # Activity 5: Store combined document hashes
+    if all_current_hashes:
+        logging.info(f'💾 Step 5: Storing {len(all_current_hashes)} combined document hashes')
+        yield context.call_activity('store_document_hashes_activity', all_current_hashes)
+    
+    # Activity 6: Store crawl history
+    orchestration_end = context.current_utc_datetime
+    duration = (orchestration_end - orchestration_start).total_seconds()
+    
+    crawl_summary = {
+        "orchestration_id": context.instance_id,
+        "sites_total": len(enabled_sites),
+        "sites_successful": successful_sites,
+        "sites_failed": failed_sites,
+        "sites_blocked": blocked_sites,
+        "documents_found": total_documents_found,
+        "documents_processed": total_documents_processed,
+        "documents_new": total_documents_new,
+        "documents_changed": total_documents_changed,
+        "documents_unchanged": total_documents_unchanged,
+        "documents_uploaded": total_documents_uploaded,
+        "trigger_type": "orchestrated",
+        "start_time": orchestration_start.isoformat(),
+        "end_time": orchestration_end.isoformat(),
+        "duration_seconds": duration,
+        "site_summaries": site_summaries
+    }
+    
+    logging.info(f'📝 Step 6: Storing crawl history')
+    yield context.call_activity('store_crawl_history_activity', crawl_summary)
+    
+    # Return final summary
+    logging.info(f'✅ Orchestration complete: {successful_sites}/{len(enabled_sites)} sites successful, '
+                f'{total_documents_uploaded} documents uploaded in {duration:.1f}s')
+    
+    return crawl_summary
+
+# Activity Functions
+
+def get_configuration_activity(input: None) -> dict:
+    """
+    Activity Function: Load website configuration from websites.json
+    
+    Returns:
+        dict: Configuration data with websites list
+    """
+    logging.info('Activity: Loading website configuration')
+    return load_websites_config()
+
+def get_document_hashes_activity(input: None) -> dict:
+    """
+    Activity Function: Retrieve previous document hashes from Azure Storage
+    
+    Returns:
+        dict: Previous document hashes for change detection
+    """
+    logging.info('Activity: Retrieving document hashes from storage')
+    return get_document_hashes_from_storage()
+
+def crawl_single_website_activity(input: dict) -> dict:
+    """
+    Activity Function: Crawl a single website
+    
+    Args:
+        input: Dict with site_config and previous_hashes
+    
+    Returns:
+        dict: Crawl results for this website
+    """
+    site_config = input["site_config"]
+    previous_hashes = input["previous_hashes"]
+    
+    logging.info(f'Activity: Crawling website - {site_config["name"]}')
+    
+    # Use the refactored core crawling function
+    result = crawl_website_core(site_config, previous_hashes)
+    
+    logging.info(f'Activity: Completed crawl for {site_config["name"]} - '
+                f'Status: {result["status"]}, Documents: {result["documents_found"]}, '
+                f'Uploaded: {result["documents_uploaded"]}')
+    
+    return result
+
+def store_document_hashes_activity(input: dict) -> bool:
+    """
+    Activity Function: Store combined document hashes to Azure Storage
+    
+    Args:
+        input: Combined document hashes from all websites
+    
+    Returns:
+        bool: Success status
+    """
+    logging.info(f'Activity: Storing {len(input)} document hashes to Azure Storage')
+    return store_document_hashes_to_storage(input)
+
+def store_crawl_history_activity(input: dict) -> bool:
+    """
+    Activity Function: Store crawl history to Azure Storage
+    
+    Args:
+        input: Crawl summary data
+    
+    Returns:
+        bool: Success status
+    """
+    logging.info('Activity: Storing crawl history to Azure Storage')
+    return store_crawl_history(input)
+
 # Function App with anonymous authentication
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# Register Durable Functions blueprint
+dfapp = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# Register orchestrator
+dfapp.orchestration_trigger(context_name="context")(web_crawler_orchestrator)
+
+# Register activity functions
+dfapp.activity_trigger(input_name="input")(get_configuration_activity)
+dfapp.activity_trigger(input_name="input")(get_document_hashes_activity)
+dfapp.activity_trigger(input_name="input")(crawl_single_website_activity)
+dfapp.activity_trigger(input_name="input")(store_document_hashes_activity)
+dfapp.activity_trigger(input_name="input")(store_crawl_history_activity)
+
+# ============================================================================
+# DURABLE FUNCTIONS TIMER TRIGGER
+# ============================================================================
+
+@dfapp.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False, use_monitor=False)
+@dfapp.durable_client_input(client_name="client")
+async def scheduled_crawler_orchestrated(mytimer: func.TimerRequest, client) -> None:
+    """
+    Timer trigger function that starts orchestrated crawling every 4 hours
+    
+    This replaces the legacy scheduled_crawler with Durable Functions orchestration
+    for parallel website crawling and better resilience.
+    """
+    logging.info('⏰ Scheduled Timer: Starting orchestrated multi-website crawler (every 4 hours)')
+    
+    try:
+        # Start the orchestration
+        instance_id = await client.start_new('web_crawler_orchestrator', None, None)
+        
+        logging.info(f'✅ Scheduled crawl orchestration started with ID: {instance_id}')
+        
+        # Log timer info
+        if mytimer.past_due:
+            logging.warning('⚠️ Timer is running late!')
+        
+    except Exception as e:
+        logging.error(f'❌ Error starting scheduled orchestration: {str(e)}')
+        # Don't raise - let the next timer run try again
+
+# ============================================================================
+# LEGACY TIMER TRIGGER (Preserved for backwards compatibility)
+# Use scheduled_crawler_orchestrated instead for new deployments
+# ============================================================================
 
 # Timer trigger function that runs every 4 hours
 @app.timer_trigger(schedule="0 0 */4 * * *", arg_name="mytimer", run_on_startup=False,
@@ -905,6 +1166,195 @@ def scheduled_crawler(mytimer: func.TimerRequest) -> None:
     store_crawl_history(crawl_summary)
     
     logging.info(f'Step 3b: Multi-website scheduled crawl complete - Sites: {total_sites_processed}/{len(enabled_sites)}, Documents: {total_processed}, New: {total_new}, Changed: {total_changed}, Unchanged: {total_unchanged}, Uploaded: {total_uploaded}')
+
+# ============================================================================
+# DURABLE FUNCTIONS HTTP TRIGGERS
+# ============================================================================
+
+@dfapp.route(route="orchestrators/web_crawler", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@dfapp.durable_client_input(client_name="client")
+async def start_web_crawler_orchestration(req: func.HttpRequest, client) -> func.HttpResponse:
+    """
+    HTTP Trigger to start the web crawler orchestration
+    
+    POST /api/orchestrators/web_crawler
+    
+    Optional JSON body:
+    {
+        "force_crawl": false  // If true, crawls all sites regardless of config
+    }
+    
+    Returns:
+        Orchestration status URLs for tracking
+    """
+    logging.info('🚀 HTTP Trigger: Starting web crawler orchestration')
+    
+    try:
+        # Parse request body (optional)
+        request_body = {}
+        try:
+            request_body = req.get_json()
+        except ValueError:
+            pass
+        
+        # Start the orchestration
+        instance_id = await client.start_new('web_crawler_orchestrator', None, None)
+        
+        logging.info(f'✅ Started orchestration with ID: {instance_id}')
+        
+        # Get status URLs
+        response = client.create_check_status_response(req, instance_id)
+        
+        # Add custom response data
+        response_data = {
+            "orchestrationId": instance_id,
+            "message": "Web crawler orchestration started successfully",
+            "statusQueryGetUri": response.get_body().decode(),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+        return func.HttpResponse(
+            json.dumps(response_data, indent=2),
+            status_code=202,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'❌ Error starting orchestration: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({
+                "error": str(e),
+                "message": "Failed to start web crawler orchestration"
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+@dfapp.route(route="orchestrators/web_crawler/{instanceId}", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@dfapp.durable_client_input(client_name="client")
+async def get_orchestration_status(req: func.HttpRequest, client) -> func.HttpResponse:
+    """
+    HTTP Trigger to check orchestration status
+    
+    GET /api/orchestrators/web_crawler/{instanceId}
+    
+    Returns:
+        Current orchestration status and results
+    """
+    instance_id = req.route_params.get('instanceId')
+    
+    logging.info(f'📊 HTTP Trigger: Checking orchestration status for ID: {instance_id}')
+    
+    try:
+        status = await client.get_status(instance_id)
+        
+        if not status:
+            return func.HttpResponse(
+                json.dumps({
+                    "error": "Orchestration not found",
+                    "instanceId": instance_id
+                }),
+                status_code=404,
+                mimetype="application/json"
+            )
+        
+        # Format response
+        response_data = {
+            "instanceId": instance_id,
+            "runtimeStatus": status.runtime_status.name if status.runtime_status else "Unknown",
+            "createdTime": status.created_time.isoformat() if status.created_time else None,
+            "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
+            "output": status.output,
+            "customStatus": status.custom_status
+        }
+        
+        # Add human-readable status
+        if status.runtime_status:
+            status_name = status.runtime_status.name
+            if status_name == "Completed":
+                response_data["message"] = "✅ Orchestration completed successfully"
+            elif status_name == "Running":
+                response_data["message"] = "🔄 Orchestration is currently running"
+            elif status_name == "Failed":
+                response_data["message"] = "❌ Orchestration failed"
+            elif status_name == "Pending":
+                response_data["message"] = "⏳ Orchestration is pending"
+            else:
+                response_data["message"] = f"Status: {status_name}"
+        
+        return func.HttpResponse(
+            json.dumps(response_data, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'❌ Error retrieving orchestration status: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({
+                "error": str(e),
+                "message": "Failed to retrieve orchestration status",
+                "instanceId": instance_id
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+@dfapp.route(route="orchestrators/web_crawler/{instanceId}/terminate", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@dfapp.durable_client_input(client_name="client")
+async def terminate_orchestration(req: func.HttpRequest, client) -> func.HttpResponse:
+    """
+    HTTP Trigger to terminate a running orchestration
+    
+    POST /api/orchestrators/web_crawler/{instanceId}/terminate
+    
+    Optional JSON body:
+    {
+        "reason": "Manual termination requested"
+    }
+    """
+    instance_id = req.route_params.get('instanceId')
+    
+    logging.info(f'🛑 HTTP Trigger: Terminating orchestration ID: {instance_id}')
+    
+    try:
+        # Parse reason from request body
+        reason = "Manual termination"
+        try:
+            request_body = req.get_json()
+            reason = request_body.get("reason", reason)
+        except ValueError:
+            pass
+        
+        # Terminate the orchestration
+        await client.terminate(instance_id, reason)
+        
+        return func.HttpResponse(
+            json.dumps({
+                "message": "Orchestration terminated successfully",
+                "instanceId": instance_id,
+                "reason": reason,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'❌ Error terminating orchestration: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({
+                "error": str(e),
+                "message": "Failed to terminate orchestration",
+                "instanceId": instance_id
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+# ============================================================================
+# LEGACY HTTP TRIGGERS (Preserved for backwards compatibility)
+# ============================================================================
 
 @app.route(route="manual_crawl", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def manual_crawl(req: func.HttpRequest) -> func.HttpResponse:
