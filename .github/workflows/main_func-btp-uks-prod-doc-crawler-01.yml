@@ -73,13 +73,17 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_87C55211E78C4BE99084236AD81178DB }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_C3E141A554694A219FD71DD41682400F }}
 
-      - name: 'Deploy to Azure Functions'
-        uses: Azure/functions-action@v1
-        id: deploy-to-function
-        with:
-          app-name: 'func-btp-uks-prod-doc-crawler-01'
-          slot-name: 'Production'
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-          scm-do-build-during-deployment: true
-          enable-oryx-build: true
+      - name: 'Create deployment package'
+        run: |
+          cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          zip -r deploy.zip . -x ".git/*" ".vscode/*" "local.settings.json" "test/*" ".venv/*" "venv/*" "__pycache__/*" "*.pyc"
+      
+      - name: 'Deploy to Azure Functions via ZIP'
+        run: |
+          az functionapp deployment source config-zip \
+            --resource-group rg-btp-uks-prod-doc-mon-01 \
+            --name func-btp-uks-prod-doc-crawler-01 \
+            --src deploy.zip \
+            --build-remote true \
+            --subscription 96726562-1726-4984-88c6-2e4f28878873
           
