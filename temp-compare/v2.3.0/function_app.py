@@ -597,10 +597,6 @@ def crawl_website_core(site_config, previous_hashes=None):
         
         current_hashes = {}
         
-        # Phase 2: Collision detection tracking
-        filenames_generated = []
-        collision_count = 0
-        
         # Process documents with change detection
         for i, doc in enumerate(all_documents):
             try:
@@ -618,19 +614,6 @@ def crawl_website_core(site_config, previous_hashes=None):
                         doc["filename"],
                         site_name
                     )
-                    
-                    # Phase 2: Detect filename collisions
-                    if unique_filename in filenames_generated:
-                        collision_count += 1
-                        logging.error(f'⚠️  COLLISION DETECTED: {unique_filename} generated twice!')
-                        logging.error(f'   URL1: {[k for k, v in current_hashes.items() if v.get("unique_filename") == unique_filename]}')
-                        logging.error(f'   URL2: {doc["url"]}')
-                        # Add collision suffix to prevent overwrite
-                        base, ext = unique_filename.rsplit('.', 1) if '.' in unique_filename else (unique_filename, 'pdf')
-                        unique_filename = f"{base}_collision_{collision_count}.{ext}"
-                        logging.info(f'   → Renamed to: {unique_filename}')
-                    
-                    filenames_generated.append(unique_filename)
                     
                     current_hashes[doc["url"]] = {
                         "filename": doc["filename"],
@@ -678,14 +661,7 @@ def crawl_website_core(site_config, previous_hashes=None):
                 logging.error(f'Error processing document {doc["filename"]}: {str(doc_error)}')
         
         result["current_hashes"] = current_hashes
-        result["collision_count"] = collision_count  # Phase 2: Track collisions
         result["status"] = "success"
-        
-        # Phase 2: Log collision summary
-        if collision_count > 0:
-            logging.warning(f'⚠️  {site_name}: {collision_count} filename collision(s) detected and resolved')
-        else:
-            logging.info(f'✅ {site_name}: Zero collisions - all filenames unique')
         
     except Exception as site_error:
         logging.error(f'Error crawling site {site_name}: {str(site_error)}')
@@ -693,52 +669,6 @@ def crawl_website_core(site_config, previous_hashes=None):
         result["error"] = str(site_error)
     
     return result
-
-def validate_storage_consistency(uploaded_count, storage_account="stbtpuksprodcrawler01", container="documents"):
-    """Phase 2: Validate that storage count matches uploaded count
-    
-    Args:
-        uploaded_count: Number of documents uploaded in this crawl
-        storage_account: Azure storage account name
-        container: Container name
-    
-    Returns:
-        dict: Validation results with match status and metrics
-    """
-    try:
-        logging.info(f'📊 Phase 2: Validating storage consistency...')
-        
-        # Get actual storage count
-        storage_stats = get_storage_statistics(storage_account, container)
-        actual_count = storage_stats.get("total_documents", 0)
-        
-        # Calculate validation metrics
-        validation_result = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "uploaded_count": uploaded_count,
-            "storage_count": actual_count,
-            "match": uploaded_count == actual_count,
-            "discrepancy": abs(uploaded_count - actual_count),
-            "accuracy_percent": round((actual_count / uploaded_count * 100) if uploaded_count > 0 else 100, 2)
-        }
-        
-        # Log results
-        if validation_result["match"]:
-            logging.info(f'✅ Storage validated: {actual_count} documents match upload count (100%)')
-        else:
-            logging.warning(f'⚠️  Storage mismatch: {uploaded_count} uploaded but {actual_count} in storage')
-            logging.warning(f'   Discrepancy: {validation_result["discrepancy"]} documents')
-            logging.warning(f'   Accuracy: {validation_result["accuracy_percent"]}%')
-        
-        return validation_result
-        
-    except Exception as e:
-        logging.error(f'❌ Storage validation failed: {str(e)}')
-        return {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "error": str(e),
-            "match": False
-        }
 
 def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcrawler01", container="crawl-metadata"):
     """Store document hashes to Azure Storage for change detection - using crawl-metadata container"""
@@ -953,17 +883,9 @@ def get_crawl_history(storage_account="stbtpuksprodcrawler01", container="docume
         return []
 
 # ============================================================================
-# MAIN FUNCTION APP - Initialize BEFORE function definitions
-# ============================================================================
-
-# Use DFApp as the main app - it extends FunctionApp and supports both regular and durable functions
-app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
-
-# ============================================================================
 # DURABLE FUNCTIONS - ORCHESTRATOR AND ACTIVITY FUNCTIONS
 # ============================================================================
 
-@app.orchestration_trigger(context_name="context")
 def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
     """
     Durable Functions Orchestrator for parallel website crawling
@@ -1028,7 +950,6 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
     total_documents_changed = 0
     total_documents_unchanged = 0
     total_documents_uploaded = 0
-    total_collisions = 0  # Phase 2: Track total collisions
     successful_sites = 0
     failed_sites = 0
     blocked_sites = 0
@@ -1042,7 +963,6 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
         total_documents_changed += result.get("documents_changed", 0)
         total_documents_unchanged += result.get("documents_unchanged", 0)
         total_documents_uploaded += result.get("documents_uploaded", 0)
-        total_collisions += result.get("collision_count", 0)  # Phase 2: Aggregate collisions
         
         # Track status
         status = result.get("status", "unknown")
@@ -1063,7 +983,6 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
             "status": status,
             "documents_found": result.get("documents_found", 0),
             "documents_uploaded": result.get("documents_uploaded", 0),
-            "collision_count": result.get("collision_count", 0),  # Phase 2: Include in summary
             "error": result.get("error")
         })
     
@@ -1071,10 +990,6 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
     if all_current_hashes:
         logging.info(f'💾 Step 5: Storing {len(all_current_hashes)} combined document hashes')
         yield context.call_activity('store_document_hashes_activity', all_current_hashes)
-    
-    # Phase 2: Activity 5.5 - Validate storage consistency
-    logging.info(f'📊 Step 5.5 (Phase 2): Validating storage consistency')
-    validation_result = yield context.call_activity('validate_storage_activity', total_documents_uploaded)
     
     # Activity 6: Store crawl history
     orchestration_end = context.current_utc_datetime
@@ -1092,8 +1007,6 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
         "documents_changed": total_documents_changed,
         "documents_unchanged": total_documents_unchanged,
         "documents_uploaded": total_documents_uploaded,
-        "collision_count": total_collisions,  # Phase 2: Include collision count
-        "validation": validation_result,  # Phase 2: Include validation results
         "trigger_type": "orchestrated",
         "start_time": orchestration_start.isoformat(),
         "end_time": orchestration_end.isoformat(),
@@ -1104,19 +1017,14 @@ def web_crawler_orchestrator(context: df.DurableOrchestrationContext):
     logging.info(f'📝 Step 6: Storing crawl history')
     yield context.call_activity('store_crawl_history_activity', crawl_summary)
     
-    # Phase 2: Enhanced summary logging
-    collision_status = f', {total_collisions} collisions' if total_collisions > 0 else ', zero collisions ✅'
-    validation_status = '✅' if validation_result.get('match') else '⚠️'
-    
+    # Return final summary
     logging.info(f'✅ Orchestration complete: {successful_sites}/{len(enabled_sites)} sites successful, '
-                f'{total_documents_uploaded} documents uploaded{collision_status} in {duration:.1f}s')
-    logging.info(f'{validation_status} Storage validation: {validation_result.get("accuracy_percent", 0)}% accuracy')
+                f'{total_documents_uploaded} documents uploaded in {duration:.1f}s')
     
     return crawl_summary
 
 # Activity Functions
 
-@app.activity_trigger(input_name="input")
 def get_configuration_activity(input: None) -> dict:
     """
     Activity Function: Load website configuration from websites.json
@@ -1127,7 +1035,6 @@ def get_configuration_activity(input: None) -> dict:
     logging.info('Activity: Loading website configuration')
     return load_websites_config()
 
-@app.activity_trigger(input_name="input")
 def get_document_hashes_activity(input: None) -> dict:
     """
     Activity Function: Retrieve previous document hashes from Azure Storage
@@ -1138,7 +1045,6 @@ def get_document_hashes_activity(input: None) -> dict:
     logging.info('Activity: Retrieving document hashes from storage')
     return get_document_hashes_from_storage()
 
-@app.activity_trigger(input_name="input")
 def crawl_single_website_activity(input: dict) -> dict:
     """
     Activity Function: Crawl a single website
@@ -1163,7 +1069,6 @@ def crawl_single_website_activity(input: dict) -> dict:
     
     return result
 
-@app.activity_trigger(input_name="input")
 def store_document_hashes_activity(input: dict) -> bool:
     """
     Activity Function: Store combined document hashes to Azure Storage
@@ -1177,7 +1082,6 @@ def store_document_hashes_activity(input: dict) -> bool:
     logging.info(f'Activity: Storing {len(input)} document hashes to Azure Storage')
     return store_document_hashes_to_storage(input)
 
-@app.activity_trigger(input_name="input")
 def store_crawl_history_activity(input: dict) -> bool:
     """
     Activity Function: Store crawl history to Azure Storage
@@ -1191,22 +1095,22 @@ def store_crawl_history_activity(input: dict) -> bool:
     logging.info('Activity: Storing crawl history to Azure Storage')
     return store_crawl_history(input)
 
-@app.activity_trigger(input_name="uploaded_count")
-def validate_storage_activity(uploaded_count: int) -> dict:
-    """
-    Activity Function: Validate storage consistency (Phase 2 Monitoring)
-    
-    Compares the number of documents uploaded in this crawl to the actual
-    count in blob storage to detect any issues.
-    
-    Args:
-        uploaded_count: Number of documents uploaded during crawl
-    
-    Returns:
-        dict: Validation results with status, counts, and accuracy
-    """
-    logging.info(f'Activity: Validating storage consistency ({uploaded_count} uploaded)')
-    return validate_storage_consistency(uploaded_count)
+# ============================================================================
+# MAIN FUNCTION APP - Use DFApp as main app (supports both regular and durable functions)
+# ============================================================================
+
+# Use DFApp as the main app - it extends FunctionApp and supports both regular and durable functions
+app = df.DFApp(http_auth_level=func.AuthLevel.ANONYMOUS)
+
+# Register orchestrator
+app.orchestration_trigger(context_name="context")(web_crawler_orchestrator)
+
+# Register activity functions
+app.activity_trigger(input_name="input")(get_configuration_activity)
+app.activity_trigger(input_name="input")(get_document_hashes_activity)
+app.activity_trigger(input_name="input")(crawl_single_website_activity)
+app.activity_trigger(input_name="input")(store_document_hashes_activity)
+app.activity_trigger(input_name="input")(store_crawl_history_activity)
 
 # ============================================================================
 # DURABLE FUNCTIONS TIMER TRIGGER
@@ -1894,10 +1798,6 @@ def api_stats(req: func.HttpRequest) -> func.HttpResponse:
         }
         
         # Compile comprehensive statistics
-        # Phase 2: Calculate collision and validation metrics
-        total_collisions_24h = sum(c.get("collision_count", 0) for c in recent_crawls)
-        last_validation = crawl_history[-1].get("validation") if crawl_history else None
-        
         stats = {
             "system": system_status,
             "websites": {
@@ -1910,15 +1810,7 @@ def api_stats(req: func.HttpRequest) -> func.HttpResponse:
                 "crawls_last_24h": len(recent_crawls),
                 "documents_processed_24h": sum(c.get("documents_found", 0) for c in recent_crawls),
                 "documents_uploaded_24h": sum(c.get("documents_uploaded", 0) for c in recent_crawls),
-                "collisions_detected_24h": total_collisions_24h,  # Phase 2
                 "last_crawl": crawl_history[-1] if crawl_history else None
-            },
-            "validation": {  # Phase 2: Storage validation metrics
-                "last_check": last_validation.get("timestamp") if last_validation else "Never",
-                "status": last_validation.get("status") if last_validation else "unknown",
-                "uploaded_count": last_validation.get("uploaded_count") if last_validation else 0,
-                "storage_count": last_validation.get("storage_count") if last_validation else 0,
-                "accuracy_percentage": last_validation.get("accuracy_percentage") if last_validation else 0
             },
             "crawl_history": crawl_history[-10:],  # Last 10 crawls
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -2215,12 +2107,6 @@ def dashboard(req: func.HttpRequest) -> func.HttpResponse:
                 <div id="recent-activity" class="loading">Loading activity data...</div>
             </div>
             
-            <!-- Phase 2: Storage Validation Card -->
-            <div class="card">
-                <h3>✅ Storage Validation (Phase 2)</h3>
-                <div id="validation-stats" class="loading">Loading validation data...</div>
-            </div>
-            
             <!-- Crawl History Card -->
             <div class="card" style="grid-column: 1 / -1;">
                 <h3>📈 Recent Crawl History</h3>
@@ -2268,7 +2154,6 @@ def dashboard(req: func.HttpRequest) -> func.HttpResponse:
                         updateWebsitesList(data.websites);
                         updateStorageStats(data.storage);
                         updateRecentActivity(data.recent_activity);
-                        updateValidationStats(data.validation, data.recent_activity);  // Phase 2
                         updateCrawlHistory(data.crawl_history);
                         
                         document.getElementById('system-status').textContent = 'System Status: ' + data.system.status.toUpperCase();
@@ -2426,56 +2311,11 @@ def dashboard(req: func.HttpRequest) -> func.HttpResponse:
                     <span class="metric-value">${activity.documents_uploaded_24h}</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Collisions Detected (24h)</span>
-                    <span class="metric-value ${activity.collisions_detected_24h > 0 ? 'status-disabled' : 'status-enabled'}">
-                        ${activity.collisions_detected_24h} ${activity.collisions_detected_24h === 0 ? '✓' : '⚠️'}
-                    </span>
-                </div>
-                <div class="metric">
                     <span class="metric-label">Last Crawl</span>
                     <span class="metric-value">${activity.last_crawl ? formatDateTime(activity.last_crawl.timestamp) : 'Never'}</span>
                 </div>
             `;
             document.getElementById('recent-activity').innerHTML = html;
-        }
-        
-        function updateValidationStats(validation, activity) {
-            // Phase 2: Display storage validation metrics
-            const statusIcon = validation.status === 'match' ? '✅' : validation.status === 'mismatch' ? '⚠️' : '❓';
-            const statusClass = validation.status === 'match' ? 'status-enabled' : 'status-disabled';
-            
-            const html = `
-                <div class="metric">
-                    <span class="metric-label">Validation Status</span>
-                    <span class="metric-value ${statusClass}">${statusIcon} ${validation.status.toUpperCase()}</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Storage Accuracy</span>
-                    <span class="metric-value ${validation.accuracy_percentage >= 99 ? 'status-enabled' : 'status-disabled'}">
-                        ${validation.accuracy_percentage.toFixed(2)}%
-                    </span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Last Validation Check</span>
-                    <span class="metric-value">${formatDateTime(validation.last_check)}</span>
-                </div>
-                <hr style="margin: 15px 0;">
-                <div class="metric">
-                    <span class="metric-label">Uploaded This Session</span>
-                    <span class="metric-value">${validation.uploaded_count}</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Verified in Storage</span>
-                    <span class="metric-value">${validation.storage_count}</span>
-                </div>
-                <div class="metric">
-                    <span class="metric-label">Filename Collisions (24h)</span>
-                    <span class="metric-value ${activity.collisions_detected_24h === 0 ? 'status-enabled' : 'status-disabled'}">
-                        ${activity.collisions_detected_24h} ${activity.collisions_detected_24h === 0 ? '(Good ✓)' : '(Review Required)'}
-                    </span>
-                </div>
-            `;
-            document.getElementById('validation-stats').innerHTML = html;
         }
         
         function updateCrawlHistory(history) {
@@ -2664,22 +2504,3 @@ def manage_websites(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500,
             mimetype="application/json"
         )
-
-# ============================================================================
-# SIMPLE TEST ENDPOINT - VERIFY DEPLOYMENT
-# ============================================================================
-
-@app.route(route="ping", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
-def ping(req: func.HttpRequest) -> func.HttpResponse:
-    """Ultra-simple test endpoint to verify function app is working"""
-    logging.info('Ping endpoint called')
-    return func.HttpResponse(
-        json.dumps({
-            "status": "alive",
-            "message": "Function app is running",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "version": "v2.4.2"
-        }),
-        status_code=200,
-        mimetype="application/json"
-    )
