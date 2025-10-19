@@ -52,15 +52,15 @@ class EnhancedDocumentLinkParser(HTMLParser):
                         self.document_links.append(attr_value)
 
 def generate_unique_filename(url, original_filename, site_name="unknown"):
-    """Generate unique filename preventing collisions
+    """Generate unique filename preventing collisions with folder organization
     
     Args:
         url: Full document URL
         original_filename: Original filename from URL
-        site_name: Source website name for categorization
+        site_name: Source website name for folder organization
     
     Returns:
-        str: Unique filename with site prefix and URL hash
+        str: Unique filename with folder prefix (e.g., "crown-prosecution-service/abc123_doc.pdf")
     """
     # Generate URL hash for uniqueness (8 chars is sufficient)
     url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
@@ -83,8 +83,8 @@ def generate_unique_filename(url, original_filename, site_name="unknown"):
     if not safe_base:
         safe_base = "document"
     
-    # Format: site/hash_filename.ext
-    # This ensures uniqueness while maintaining readability
+    # Format: folder/hash_filename.ext
+    # Folder provides organization, hash ensures uniqueness, base provides readability
     return f"{safe_site}/{url_hash}_{safe_base}{ext}"
 
 def find_documents_in_html(html_content, base_url):
@@ -214,14 +214,144 @@ def get_managed_identity_token():
         logging.error(f'Failed to get managed identity token: {str(e)}')
         return None
 
-def upload_to_blob_storage_real(content, filename, storage_account="stbtpuksprodcrawler01", container="documents"):
-    """Upload content to Azure Blob Storage using REST API and managed identity
+def get_folder_name_for_website(website_name):
+    """Convert website name to folder name for blob storage organization
+    
+    Args:
+        website_name: Website display name (e.g., "Crown Prosecution Service")
+    
+    Returns:
+        str: Sanitized folder name (e.g., "crown-prosecution-service")
+    """
+    # Convert to lowercase and replace spaces with hyphens
+    folder_name = website_name.lower().replace(' ', '-')
+    # Remove special characters, keep only alphanumeric and hyphens
+    folder_name = re.sub(r'[^a-z0-9-]', '', folder_name)
+    # Limit length for Azure blob naming
+    return folder_name[:63]
+
+def ensure_website_folder_exists(website_name, storage_account="stbtpuksprodcrawler01", container="documents"):
+    """Create a placeholder file to establish a website folder in blob storage
+    
+    Args:
+        website_name: Website display name
+        storage_account: Azure storage account name
+        container: Container name
+    
+    Returns:
+        bool: True if folder exists or was created successfully
+    """
+    try:
+        folder_name = get_folder_name_for_website(website_name)
+        
+        # Create a .folder placeholder file
+        # This ensures the folder appears in Azure Storage Explorer
+        placeholder_filename = f"{folder_name}/.folder"
+        placeholder_content = json.dumps({
+            "website_name": website_name,
+            "folder_created": datetime.now(timezone.utc).isoformat(),
+            "purpose": "Folder placeholder for document organization"
+        }, indent=2).encode('utf-8')
+        
+        # Upload placeholder
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.warning('Failed to get access token for folder creation')
+            return False
+        
+        blob_url = f"https://{storage_account}.blob.core.windows.net/{container}/{placeholder_filename}"
+        
+        req = urllib.request.Request(blob_url, data=placeholder_content, method='PUT')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-blob-type', 'BlockBlob')
+        req.add_header('x-ms-version', '2021-06-08')
+        req.add_header('Content-Type', 'application/json')
+        req.add_header('Content-Length', str(len(placeholder_content)))
+        
+        # Add metadata
+        req.add_header('x-ms-meta-folderplaceholder', 'true')
+        req.add_header('x-ms-meta-websitename', urllib.parse.quote(website_name))
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                if response.status in [200, 201]:
+                    logging.info(f'✅ Created folder for website: {folder_name}')
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code == 409:
+                # Already exists - this is fine
+                logging.info(f'Folder already exists: {folder_name}')
+                return True
+            else:
+                logging.warning(f'Failed to create folder {folder_name}: HTTP {e.code}')
+                return False
+                
+        return True
+        
+    except Exception as e:
+        logging.error(f'Error creating folder for {website_name}: {str(e)}')
+        return False
+
+def ensure_container_exists(container_name, storage_account="stbtpuksprodcrawler01"):
+    """Create container if it doesn't exist using REST API
+    
+    Args:
+        container_name: Name of container to create
+        storage_account: Azure storage account name
+    
+    Returns:
+        bool: True if container exists or was created successfully
+    """
+    try:
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.error('Failed to get access token for container creation')
+            return False
+        
+        # Create container using REST API
+        # PUT /{container}?restype=container
+        url = f"https://{storage_account}.blob.core.windows.net/{container_name}?restype=container"
+        
+        req = urllib.request.Request(url, method='PUT')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-version', '2021-06-08')
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                status_code = response.status
+                if status_code == 201:
+                    logging.info(f'✅ Created new container: {container_name}')
+                    return True
+                elif status_code == 200:
+                    logging.info(f'Container already exists: {container_name}')
+                    return True
+        except urllib.error.HTTPError as e:
+            if e.code == 409:
+                # Container already exists - this is fine
+                logging.info(f'Container already exists: {container_name}')
+                return True
+            else:
+                logging.error(f'Failed to create container {container_name}: HTTP {e.code}')
+                return False
+                
+        return True
+        
+    except Exception as e:
+        logging.error(f'Error ensuring container exists ({container_name}): {str(e)}')
+        return False
+
+def upload_to_blob_storage_real(content, filename, storage_account="stbtpuksprodcrawler01", container="documents", 
+                                website_id=None, website_name=None, metadata=None):
+    """Upload content to Azure Blob Storage using REST API and managed identity with rich metadata
     
     Args:
         content: Binary content to upload
-        filename: Unique filename (can include path like 'site/hash_name.pdf')
+        filename: Filename with folder prefix (e.g., "crown-prosecution-service/abc123_doc.pdf")
         storage_account: Azure storage account name
-        container: Container name
+        container: Container name (default: "documents")
+        website_id: Website ID for metadata (e.g., "cps_working")
+        website_name: Website display name for metadata (e.g., "Crown Prosecution Service")
+        metadata: Additional custom metadata dict to attach to blob
     
     Returns:
         dict: Upload result with success status
@@ -236,7 +366,7 @@ def upload_to_blob_storage_real(content, filename, storage_account="stbtpuksprod
                 "message": "Falling back to simulation"
             }
         
-        # Construct blob URL (filename can include path separators)
+        # Construct blob URL
         blob_url = f"https://{storage_account}.blob.core.windows.net/{container}/{filename}"
         
         # Create request
@@ -255,6 +385,26 @@ def upload_to_blob_storage_real(content, filename, storage_account="stbtpuksprod
             req.add_header("Content-Type", "text/csv")
         else:
             req.add_header("Content-Type", "application/octet-stream")
+        
+        # Add rich blob metadata for AI search and filtering
+        # Metadata keys must be lowercase and valid HTTP header names
+        if website_id:
+            req.add_header("x-ms-meta-websiteid", website_id)
+        if website_name:
+            # URL-encode website name for header safety
+            safe_name = urllib.parse.quote(website_name)
+            req.add_header("x-ms-meta-websitename", safe_name)
+        
+        # Add crawl timestamp
+        req.add_header("x-ms-meta-crawldate", datetime.now(timezone.utc).isoformat())
+        
+        # Add custom metadata if provided
+        if metadata:
+            for key, value in metadata.items():
+                # Sanitize key and value for HTTP headers
+                safe_key = re.sub(r'[^a-z0-9]', '', key.lower())
+                safe_value = urllib.parse.quote(str(value))
+                req.add_header(f"x-ms-meta-{safe_key}", safe_value)
         
         # Upload to blob storage
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -513,6 +663,9 @@ def crawl_website_core(site_config, previous_hashes=None):
     try:
         logging.info(f'Crawling site: {site_name} ({site_url})')
         
+        # Ensure website folder exists in storage (automatic folder creation)
+        ensure_website_folder_exists(site_name)
+        
         # Advanced headers with Chrome security context
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
@@ -659,9 +812,20 @@ def crawl_website_core(site_config, previous_hashes=None):
                     
                     # Upload if new or changed
                     if should_upload:
+                        # Prepare metadata for AI search and filtering
+                        blob_metadata = {
+                            "documenttype": doc.get("type", "unknown"),
+                            "originalfilename": doc["filename"],
+                            "status": status,
+                            "documenturl": doc["url"]
+                        }
+                        
                         storage_result = upload_to_blob_storage_real(
-                            download_result["content"],
-                            unique_filename  # Use unique filename instead of original
+                            content=download_result["content"],
+                            filename=unique_filename,  # Includes folder prefix
+                            website_id=site_config.get("id"),
+                            website_name=site_name,
+                            metadata=blob_metadata
                         )
                         if storage_result["success"]:
                             result["documents_uploaded"] += 1
@@ -831,15 +995,15 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
         # The generate_unique_filename function creates files like: "site-name/hash_filename.ext"
         site_stats = {}
         
-        # Mapping of folder prefixes to display names from websites.json
-        # These match the sanitized site names created by generate_unique_filename
-        site_display_names = {
-            "college-of-policing-app-portal": "College of Policing",
-            "crown-prosecution-service": "Crown Prosecution Service",
-            "uk-legislation-test-working": "UK Legislation",
-            "npcc-publications-all-publications": "NPCC Publications",
-            "uk-public-general-acts": "UK Legislation - Public Acts"
-        }
+        # Load website configurations to build dynamic mapping
+        websites_data = load_websites_config()
+        site_display_names = {}
+        
+        if "error" not in websites_data:
+            for website_id, config in websites_data.get("websites", {}).items():
+                # Generate folder name same way as generate_unique_filename
+                folder_name = get_folder_name_for_website(config["name"])
+                site_display_names[folder_name] = config["name"]
         
         for blob in blobs:
             # Extract the site folder prefix (before the first '/')
@@ -848,12 +1012,12 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
             else:
                 site_folder = "other"
             
-            # Get display name or use the folder name if not mapped
+            # Get display name from mapping or use prettified folder name
             display_name = site_display_names.get(site_folder, site_folder.replace('-', ' ').title())
             
             # Initialize site stats if not exists
             if display_name not in site_stats:
-                site_stats[display_name] = {"count": 0, "size": 0, "files": []}
+                site_stats[display_name] = {"count": 0, "size": 0, "files": [], "folder": site_folder}
             
             # Add blob to site stats
             site_stats[display_name]["count"] += 1
@@ -2619,6 +2783,66 @@ def websites(req: func.HttpRequest) -> func.HttpResponse:
 def crawl(req: func.HttpRequest) -> func.HttpResponse:
     """Simple crawl endpoint - alias for manual_crawl for easier access"""
     return manual_crawl(req)
+
+@app.route(route="initialize_folders", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def initialize_folders(req: func.HttpRequest) -> func.HttpResponse:
+    """Initialize storage folders for all configured websites"""
+    logging.info('Initialize folders endpoint called')
+    
+    try:
+        # Get all websites from websites.json
+        websites_data = load_websites_config()
+        
+        if "error" in websites_data:
+            return func.HttpResponse(
+                json.dumps({"error": websites_data["error"]}),
+                status_code=500,
+                mimetype="application/json"
+            )
+        
+        results = []
+        success_count = 0
+        fail_count = 0
+        
+        for website_id, config in websites_data["websites"].items():
+            website_name = config["name"]
+            logging.info(f'Creating folder for: {website_name}')
+            
+            if ensure_website_folder_exists(website_name):
+                results.append({
+                    "website": website_name,
+                    "status": "success",
+                    "folder": get_folder_name_for_website(website_name)
+                })
+                success_count += 1
+            else:
+                results.append({
+                    "website": website_name,
+                    "status": "failed",
+                    "folder": get_folder_name_for_website(website_name)
+                })
+                fail_count += 1
+        
+        return func.HttpResponse(
+            json.dumps({
+                "message": "Folder initialization complete",
+                "total_websites": len(websites_data["websites"]),
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "results": results,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'Initialize folders error: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
 
 @app.route(route="manage_websites", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def manage_websites(req: func.HttpRequest) -> func.HttpResponse:

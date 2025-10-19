@@ -1,5 +1,51 @@
 ## Functions Python Web Crawler Changelog
 
+<a name="2.6.0"></a>
+# 2.6.0 (2025-10-19)
+
+*Major Enhancement*
+* **Smart Storage Organization:** Implemented automatic folder creation for each website in single `documents/` container
+* **AI-Ready Metadata:** Added rich blob metadata (websiteid, websitename, crawldate, documenttype, etc.) to every uploaded document for Azure AI Search compatibility
+* **Dynamic Dashboard:** Storage statistics now load website configurations from `websites.json` for accurate, maintainable categorization
+* **Folder Initialization:** New `/api/initialize_folders` endpoint to create folder structure for all configured websites at once
+
+*Features*
+* **Automatic Folder Management:**
+  - `get_folder_name_for_website()` - Converts website names to sanitized folder names
+  - `ensure_website_folder_exists()` - Creates folders with metadata placeholder files (.folder)
+  - Folders automatically created on first crawl of any website
+* **Rich Metadata Support:**
+  - Every blob gets x-ms-meta headers: websiteid, websitename, crawldate
+  - Custom metadata support: documenttype, originalfilename, status, documenturl
+  - Metadata enables powerful AI search filtering without multiple containers
+* **Dynamic Configuration:**
+  - Dashboard stats load from `websites.json` instead of hardcoded mappings
+  - Automatically adapts when websites are added/removed
+  - Folder-to-displayname mapping built dynamically
+
+*API Changes*
+* **New Endpoint:** `POST /api/initialize_folders` - Creates folder structure for all websites
+* **Enhanced Function:** `upload_to_blob_storage_real()` - Now accepts website_id, website_name, and metadata parameters
+* **Updated Function:** `crawl_website_core()` - Automatically ensures folder exists before crawling
+
+*Architecture Benefits*
+* **AI Search Ready:** Single container perfect for Azure AI Search, Azure OpenAI, RAG solutions
+* **Rich Filtering:** Query documents by website, date, type using blob metadata
+* **Visual Organization:** Clear folder structure visible in Azure Portal
+* **No Breaking Changes:** Existing documents remain accessible, new crawls use enhanced structure
+
+*Files Modified*
+* `function_app.py` - Lines 217-289 (folder management), Lines 291-365 (metadata upload), Lines 666-670 (auto folder creation), Lines 942-975 (dynamic stats), Lines 2782-2842 (initialization endpoint)
+* `VERSION-TRACKING.md` - Updated to v2.6.0
+
+*Deployment Notes*
+After deploying v2.6.0, call the initialization endpoint to create folders for existing websites:
+```bash
+curl -X POST https://func-btp-uks-prod-doc-crawler-01.azurewebsites.net/api/initialize_folders
+```
+
+---
+
 <a name="2.5.2"></a>
 # 2.5.2 (2025-10-19)
 

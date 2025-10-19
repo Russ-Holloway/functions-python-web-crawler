@@ -1,10 +1,93 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.5.2 (Dashboard Labels Enhancement - Ready to Deploy)
+## Current Version: v2.6.0 (Smart Storage Organization + AI-Ready Metadata - Ready to Deploy)
 
 ---
 
 ## Version History
+
+### v2.6.0 - Smart Storage Organization + AI-Ready Metadata (MAJOR ENHANCEMENT)
+**Status**: 🚀 **READY TO DEPLOY**  
+**Date**: October 19, 2025  
+**Type**: Major Enhancement - Architecture Improvement
+
+**What This Delivers:**
+This is the BEST implementation combining organization AND AI-search capability!
+
+**Key Features:**
+1. ✅ **Automatic Folder Creation** - Each website gets its own folder in storage
+2. ✅ **Rich Blob Metadata** - Every document tagged with website info for AI search
+3. ✅ **Single Container** - AI-friendly `documents/` container structure
+4. ✅ **Dynamic Dashboard** - Stats automatically grouped by website
+5. ✅ **Folder Initialization** - New endpoint to create folders for all websites
+
+**Architecture:**
+```
+Storage: stbtpuksprodcrawler01/documents/
+├── college-of-policing-app-portal/
+│   └── abc123_document.pdf (+ metadata: websiteid, websitename, crawldate)
+├── crown-prosecution-service/
+│   └── def456_guidance.pdf (+ metadata)
+├── npcc-publications-all-publications/
+│   └── ghi789_report.pdf (+ metadata)
+└── uk-legislation-test-working/
+    └── jkl012_act.xml (+ metadata)
+```
+
+**Blob Metadata Attached:**
+- `websiteid` - Website ID from config (e.g., "cps_working")
+- `websitename` - Display name (e.g., "Crown Prosecution Service")
+- `crawldate` - ISO timestamp of crawl
+- `documenttype` - Type of document
+- `originalfilename` - Original filename before sanitization
+- `status` - "new", "changed", or "unchanged"
+- `documenturl` - Original source URL
+
+**Benefits:**
+- ✅ **AI Search Ready** - Single container for Azure AI Search/OpenAI
+- ✅ **Rich Filtering** - Query by website, date, type using metadata
+- ✅ **Visual Organization** - Clear folder structure in Azure Portal
+- ✅ **Auto-Initialization** - Folders created automatically on first crawl
+- ✅ **Easy Management** - Navigate/manage docs by website folder
+- ✅ **Future-Proof** - New websites automatically get folders
+
+**New Functions:**
+- `get_folder_name_for_website()` - Convert website name to folder name
+- `ensure_website_folder_exists()` - Create folder with placeholder
+- Enhanced `upload_to_blob_storage_real()` - Now adds rich metadata
+- Enhanced `get_storage_statistics()` - Dynamic website mapping
+- New endpoint: `/api/initialize_folders` - Create all folders at once
+
+**Changes:**
+- `upload_to_blob_storage_real()` - Added metadata parameters
+- `crawl_website_core()` - Automatic folder creation before crawl
+- `get_storage_statistics()` - Dynamic loading from websites.json
+- `generate_unique_filename()` - Reverted to folder prefix structure
+
+**Deployment:**
+```bash
+# Deploy
+git add -A
+git commit -m "v2.6.0: Smart storage with folders + AI-ready metadata"
+git push origin main
+
+# After deployment, initialize folders
+curl -X POST https://func-btp-uks-prod-doc-crawler-01.azurewebsites.net/api/initialize_folders
+```
+
+**AI Integration Ready:**
+This structure is PERFECT for:
+- Azure AI Search indexing (single container)
+- Azure OpenAI on Your Data
+- Custom RAG (Retrieval-Augmented Generation) solutions
+- Filtered searches by website using metadata
+
+**No Breaking Changes:**
+- Existing documents remain accessible
+- New crawls use enhanced structure
+- Dashboard automatically adapts
+
+---
 
 ### v2.5.2 - Dashboard Storage Labels Enhancement
 **Status**: 🚀 **READY TO DEPLOY**  
