@@ -1,13 +1,52 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.5.0 (Functions Not Appearing Fix - Ready to Deploy)
+## Current Version: v2.5.1 (Storage Permissions Fix - Deployed)
 
 ---
 
 ## Version History
 
+### v2.5.1 - Storage Permissions Fix
+**Status**: ✅ **DEPLOYED & OPERATIONAL**  
+**Date**: October 19, 2025  
+**Type**: Configuration Fix (No code changes)
+
+**Issue Resolved:**
+Dashboard displaying "HTTP Error 403: This request is not authorized to perform this operation using this permission" when accessing storage statistics.
+
+**Root Cause:**
+Function App's managed identity lacked RBAC permissions on storage account `stbtpuksprodcrawler01`.
+
+**Solution Applied:**
+Assigned **"Storage Blob Data Contributor"** role to Function App's managed identity on storage account.
+
+**Azure CLI Commands Used:**
+```bash
+# Get Function App managed identity principal ID
+PRINCIPAL_ID=$(az functionapp identity show --name func-btp-uks-prod-doc-crawler-01 --resource-group rg-btp-uks-prod-doc-mon-01 --subscription 96726562-1726-4984-88c6-2e4f28878873 --query principalId --output tsv)
+
+# Assign Storage Blob Data Contributor role
+az role assignment create --assignee $PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope /subscriptions/96726562-1726-4984-88c6-2e4f28878873/resourceGroups/rg-btp-uks-prod-doc-mon-01/providers/Microsoft.Storage/storageAccounts/stbtpuksprodcrawler01 --subscription 96726562-1726-4984-88c6-2e4f28878873
+```
+
+**What This Fixes:**
+- ✅ Dashboard storage statistics now loading correctly
+- ✅ `/api/stats` endpoint returning complete data
+- ✅ Storage operations (list, read, write blobs) working
+- ✅ Crawl history accessible
+- ✅ Document upload tracking functional
+
+**Files Created:**
+- `fix-storage-permissions.sh` - Automated fix script
+- `STORAGE-PERMISSIONS-FIX.md` - Detailed documentation
+- `FIX-COMMANDS.txt` - Manual command reference
+
+**No deployment required** - Configuration change only
+
+---
+
 ### v2.5.0 - Complete Function App Fix (CRITICAL)
-**Status**: 🚨 **READY TO DEPLOY** - Fix for functions not appearing in portal  
+**Status**: ✅ **DEPLOYED** - Functions now appearing in portal  
 **Date**: October 19, 2025  
 **Deployment Package**: `v2.5.0-deployment.zip`
 

@@ -1,0 +1,77 @@
+========================================
+STORAGE PERMISSIONS FIX - COMMANDS
+========================================
+
+Run these commands in your Azure CLI Bash terminal:
+
+STEP 1: Get the Function App's Managed Identity Principal ID
+-------------------------------------------------------------
+az functionapp identity show \
+  --name func-btp-uks-prod-doc-crawler-01 \
+  --resource-group rg-btp-uks-prod-doc-mon-01 \
+  --subscription 96726562-1726-4984-88c6-2e4f28878873 \
+  --query principalId \
+  --output tsv
+
+Copy the Principal ID output (it will be a GUID like: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+
+
+STEP 2: Get the Storage Account Resource ID
+--------------------------------------------
+az storage account show \
+  --name stbtpuksprodcrawler01 \
+  --resource-group rg-btp-uks-prod-doc-mon-01 \
+  --subscription 96726562-1726-4984-88c6-2e4f28878873 \
+  --query id \
+  --output tsv
+
+Copy the Storage ID output
+
+
+STEP 3: Assign Storage Blob Data Contributor Role
+--------------------------------------------------
+Replace <PRINCIPAL_ID> with the ID from Step 1:
+
+az role assignment create \
+  --assignee <PRINCIPAL_ID> \
+  --role "Storage Blob Data Contributor" \
+  --scope /subscriptions/96726562-1726-4984-88c6-2e4f28878873/resourceGroups/rg-btp-uks-prod-doc-mon-01/providers/Microsoft.Storage/storageAccounts/stbtpuksprodcrawler01 \
+  --subscription 96726562-1726-4984-88c6-2e4f28878873
+
+
+STEP 4: Verify the Role Assignment
+-----------------------------------
+Replace <PRINCIPAL_ID> with the ID from Step 1:
+
+az role assignment list \
+  --assignee <PRINCIPAL_ID> \
+  --scope /subscriptions/96726562-1726-4984-88c6-2e4f28878873/resourceGroups/rg-btp-uks-prod-doc-mon-01/providers/Microsoft.Storage/storageAccounts/stbtpuksprodcrawler01 \
+  --query "[?roleDefinitionName=='Storage Blob Data Contributor']" \
+  --output table
+
+
+STEP 5: Wait and Test
+---------------------
+Wait 1-2 minutes for role assignment to propagate, then refresh your dashboard.
+
+If you still see errors, restart the Function App:
+
+az functionapp restart \
+  --name func-btp-uks-prod-doc-crawler-01 \
+  --resource-group rg-btp-uks-prod-doc-mon-01 \
+  --subscription 96726562-1726-4984-88c6-2e4f28878873
+
+
+========================================
+QUICK SINGLE-LINE COMMANDS
+========================================
+
+If you prefer, run these in sequence (they set variables):
+
+PRINCIPAL_ID=$(az functionapp identity show --name func-btp-uks-prod-doc-crawler-01 --resource-group rg-btp-uks-prod-doc-mon-01 --subscription 96726562-1726-4984-88c6-2e4f28878873 --query principalId --output tsv) && echo "Principal ID: $PRINCIPAL_ID"
+
+az role assignment create --assignee $PRINCIPAL_ID --role "Storage Blob Data Contributor" --scope /subscriptions/96726562-1726-4984-88c6-2e4f28878873/resourceGroups/rg-btp-uks-prod-doc-mon-01/providers/Microsoft.Storage/storageAccounts/stbtpuksprodcrawler01 --subscription 96726562-1726-4984-88c6-2e4f28878873
+
+echo "✅ Role assigned! Wait 1-2 minutes, then refresh your dashboard."
+
+========================================
