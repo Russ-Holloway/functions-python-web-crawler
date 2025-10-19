@@ -80,4 +80,6 @@ jobs:
           app-name: 'func-btp-uks-prod-doc-crawler-01'
           slot-name: 'Production'
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true
           
