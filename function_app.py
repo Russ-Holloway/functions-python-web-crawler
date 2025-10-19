@@ -1000,10 +1000,11 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
         site_display_names = {}
         
         if "error" not in websites_data:
-            for website_id, config in websites_data.get("websites", {}).items():
+            # websites_data["websites"] is a list, not a dict
+            for website_config in websites_data.get("websites", []):
                 # Generate folder name same way as generate_unique_filename
-                folder_name = get_folder_name_for_website(config["name"])
-                site_display_names[folder_name] = config["name"]
+                folder_name = get_folder_name_for_website(website_config["name"])
+                site_display_names[folder_name] = website_config["name"]
         
         for blob in blobs:
             # Extract the site folder prefix (before the first '/')
@@ -2804,8 +2805,9 @@ def initialize_folders(req: func.HttpRequest) -> func.HttpResponse:
         success_count = 0
         fail_count = 0
         
-        for website_id, config in websites_data["websites"].items():
-            website_name = config["name"]
+        # websites_data["websites"] is a list, not a dict
+        for website_config in websites_data.get("websites", []):
+            website_name = website_config["name"]
             logging.info(f'Creating folder for: {website_name}')
             
             if ensure_website_folder_exists(website_name):
@@ -2826,7 +2828,7 @@ def initialize_folders(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({
                 "message": "Folder initialization complete",
-                "total_websites": len(websites_data["websites"]),
+                "total_websites": len(websites_data.get("websites", [])),
                 "success_count": success_count,
                 "fail_count": fail_count,
                 "results": results,
