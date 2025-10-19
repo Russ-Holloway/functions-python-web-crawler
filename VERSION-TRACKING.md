@@ -1,10 +1,49 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.5.1 (Storage Permissions Fix - Deployed)
+## Current Version: v2.5.2 (Dashboard Labels Enhancement - Ready to Deploy)
 
 ---
 
 ## Version History
+
+### v2.5.2 - Dashboard Storage Labels Enhancement
+**Status**: 🚀 **READY TO DEPLOY**  
+**Date**: October 19, 2025  
+**Type**: Enhancement - UI Improvement
+
+**Enhancement:**
+Updated dashboard storage statistics to display documents grouped by actual website names instead of generic categories.
+
+**Changes:**
+- **Before:** Documents labeled as "CPS", "LEGISLATION", "OTHER" (keyword-based matching)
+- **After:** Documents labeled by actual website titles:
+  - "College of Policing"
+  - "Crown Prosecution Service"
+  - "UK Legislation"
+  - "NPCC Publications"
+  - "UK Legislation - Public Acts"
+
+**Technical Details:**
+- Modified `get_storage_statistics()` to extract folder prefix from filenames
+- Updated site categorization to use folder structure instead of keyword matching
+- Simplified dashboard JavaScript to display names as-is (no transformation)
+- Added proper mapping from sanitized folder names to display names
+
+**Files Modified:**
+- `function_app.py` - Lines 781-808 (categorization logic)
+- `function_app.py` - Lines 2397-2407 (dashboard display)
+
+**Deployment:**
+```bash
+# Automatic via GitHub Actions
+git add function_app.py VERSION-TRACKING.md CHANGELOG.md
+git commit -m "v2.5.2: Enhanced dashboard labels with website names"
+git push origin main
+```
+
+**No breaking changes** - Purely cosmetic UI enhancement
+
+---
 
 ### v2.5.1 - Storage Permissions Fix
 **Status**: ✅ **DEPLOYED & OPERATIONAL**  

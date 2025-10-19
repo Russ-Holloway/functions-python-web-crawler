@@ -1,5 +1,23 @@
 ## Functions Python Web Crawler Changelog
 
+<a name="2.5.2"></a>
+# 2.5.2 (2025-10-19)
+
+*Features*
+* **Dashboard:** Enhanced storage statistics to display documents grouped by actual website names instead of generic categories
+* **UI:** Improved document source labels for better clarity (e.g., "Crown Prosecution Service" instead of "CPS")
+
+*Technical Changes*
+* Updated `get_storage_statistics()` to extract folder prefix from filenames for accurate categorization
+* Changed from keyword-based matching to folder structure-based categorization
+* Simplified dashboard JavaScript display logic
+* Added proper mapping from sanitized folder names to display names
+
+*Files Modified*
+* `function_app.py` - Storage categorization logic and dashboard display
+
+---
+
 <a name="2.5.1"></a>
 # 2.5.1 (2025-10-19)
 

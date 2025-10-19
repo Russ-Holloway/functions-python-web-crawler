@@ -827,38 +827,38 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
                 logging.warning(f'Error processing blob: {str(blob_error)}')
                 continue
         
-        # Categorize documents by site (based on filename patterns)
-        site_stats = {
-            "college_of_policing": {"count": 0, "size": 0, "files": []},
-            "cps": {"count": 0, "size": 0, "files": []},
-            "npcc": {"count": 0, "size": 0, "files": []},
-            "legislation": {"count": 0, "size": 0, "files": []},
-            "other": {"count": 0, "size": 0, "files": []}
+        # Categorize documents by site (based on folder prefix in filename)
+        # The generate_unique_filename function creates files like: "site-name/hash_filename.ext"
+        site_stats = {}
+        
+        # Mapping of folder prefixes to display names from websites.json
+        # These match the sanitized site names created by generate_unique_filename
+        site_display_names = {
+            "college-of-policing-app-portal": "College of Policing",
+            "crown-prosecution-service": "Crown Prosecution Service",
+            "uk-legislation-test-working": "UK Legislation",
+            "npcc-publications-all-publications": "NPCC Publications",
+            "uk-public-general-acts": "UK Legislation - Public Acts"
         }
         
         for blob in blobs:
-            name_lower = blob["name"].lower()
-            
-            if "college" in name_lower or "policing" in name_lower:
-                site_stats["college_of_policing"]["count"] += 1
-                site_stats["college_of_policing"]["size"] += blob["size"]
-                site_stats["college_of_policing"]["files"].append(blob)
-            elif "cps" in name_lower or "prosecution" in name_lower:
-                site_stats["cps"]["count"] += 1
-                site_stats["cps"]["size"] += blob["size"]
-                site_stats["cps"]["files"].append(blob)
-            elif "npcc" in name_lower or "police" in name_lower:
-                site_stats["npcc"]["count"] += 1
-                site_stats["npcc"]["size"] += blob["size"]
-                site_stats["npcc"]["files"].append(blob)
-            elif "legislation" in name_lower or "ukpga" in name_lower or "uksi" in name_lower:
-                site_stats["legislation"]["count"] += 1
-                site_stats["legislation"]["size"] += blob["size"]
-                site_stats["legislation"]["files"].append(blob)
+            # Extract the site folder prefix (before the first '/')
+            if '/' in blob["name"]:
+                site_folder = blob["name"].split('/')[0].lower()
             else:
-                site_stats["other"]["count"] += 1
-                site_stats["other"]["size"] += blob["size"]
-                site_stats["other"]["files"].append(blob)
+                site_folder = "other"
+            
+            # Get display name or use the folder name if not mapped
+            display_name = site_display_names.get(site_folder, site_folder.replace('-', ' ').title())
+            
+            # Initialize site stats if not exists
+            if display_name not in site_stats:
+                site_stats[display_name] = {"count": 0, "size": 0, "files": []}
+            
+            # Add blob to site stats
+            site_stats[display_name]["count"] += 1
+            site_stats[display_name]["size"] += blob["size"]
+            site_stats[display_name]["files"].append(blob)
         
         return {
             "total_documents": len(blobs),
@@ -2400,7 +2400,7 @@ def dashboard(req: func.HttpRequest) -> func.HttpResponse:
                     if (stats.count > 0) {
                         html += `
                             <div class="metric">
-                                <span class="metric-label">${site.replace('_', ' ').toUpperCase()}</span>
+                                <span class="metric-label">${site}</span>
                                 <span class="metric-value">${stats.count} docs (${formatBytes(stats.size)})</span>
                             </div>
                         `;
