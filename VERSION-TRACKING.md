@@ -1,10 +1,60 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.4.2 (Hotfix - Ready to Deploy)
+## Current Version: v2.5.0 (Functions Not Appearing Fix - Ready to Deploy)
 
 ---
 
 ## Version History
+
+### v2.5.0 - Complete Function App Fix (CRITICAL)
+**Status**: 🚨 **READY TO DEPLOY** - Fix for functions not appearing in portal  
+**Date**: October 19, 2025  
+**Deployment Package**: `v2.5.0-deployment.zip`
+
+**Issue Resolved:**
+Functions not appearing in Azure Portal despite proper decorator-based registration. This comprehensive fix ensures:
+- ✅ Proper Python v2 programming model structure
+- ✅ Correct extension bundle configuration ([4.*, 5.0.0))
+- ✅ All decorators properly applied to functions
+- ✅ Single `app` instance initialization
+- ✅ Verified deployment package structure
+
+**What This Fixes:**
+1. Functions not showing up in Azure Portal Functions list
+2. Missing HTTP triggers in portal UI
+3. Durable Functions orchestrator not visible
+4. Activity functions not registered
+
+**Files Verified:**
+- `function_app.py` - Complete with 20+ decorated functions
+  - 1 orchestration trigger (`web_crawler_orchestrator`)
+  - 6 activity triggers (configuration, hashes, crawling, storage, validation)
+  - 2 timer triggers (orchestrated + legacy schedulers)
+  - 13 HTTP route triggers (API endpoints)
+- `host.json` - Extension bundle [4.*, 5.0.0) configured
+- `requirements.txt` - Latest Azure Functions packages
+- `websites.json` - Website configuration
+
+**Deployment Method:**
+GitHub Actions CI/CD (Automatic on push to main)
+
+**Quick Deploy:**
+```bash
+git add .
+git commit -m "v2.5.0: Fix functions not appearing in portal"
+git push origin main
+```
+
+**Alternative - Manual ZIP Deployment:**
+```bash
+az functionapp deployment source config-zip \
+  --resource-group rg-btp-uks-prod-doc-mon-01 \
+  --name func-btp-uks-prod-doc-crawler-01 \
+  --src v2.5.0-deployment.zip \
+  --subscription 96726562-1726-4984-88c6-2e4f28878873
+```
+
+---
 
 ### v2.4.2 - Function Registration Fix (CRITICAL)
 **Status**: 🚨 **HOTFIX READY** - Deploy Immediately  
