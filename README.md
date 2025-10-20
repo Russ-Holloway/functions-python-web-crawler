@@ -4,119 +4,312 @@ languages:
 - python
 products:
 - azure
-- azure functions
-name:
-- Python Web Crawler
-description:
-- This sample shows how to crawl a website via a Python Azure Function using BeautifulSoup4 and extract specific information for manipulation/storage.
+- azure-functions
+name: Azure Functions Python Web Crawler
+description: Production-ready web crawler built with Azure Durable Functions and Python that extracts content from multiple websites in parallel.
 ---
 
-# Python Web Crawler
-This sample shows how to crawl a website via a Python Azure Function using BeautifulSoup4 and extract specific information for manipulation/storage.
+# Azure Functions Python Web Crawler
+
+A production-ready, scalable web crawler built with Azure Durable Functions that processes multiple websites in parallel. The crawler extracts content, generates unique filenames, and saves the results to Azure Blob Storage with comprehensive error handling and monitoring.
+
+## Features
+
+- **Parallel Processing**: Crawl multiple websites simultaneously using Azure Durable Functions orchestration
+- **Smart Content Extraction**: Extract titles, metadata, and content from web pages
+- **Unique Filename Generation**: Automatically generate collision-resistant filenames for crawled content
+- **Azure Blob Storage**: Store crawled content with organized naming conventions
+- **Production Error Handling**: Comprehensive error handling with detailed logging
+- **Monitoring Ready**: Integration with Application Insights for monitoring and diagnostics
+- **Configurable**: Easy website management through JSON configuration
+
+## Architecture
+
+This project uses Azure Durable Functions with the following components:
+
+- **HTTP Trigger**: Initiates the crawl orchestration (`crawl_orchestrator_http`)
+- **Orchestrator**: Manages parallel execution of crawl activities (`crawl_orchestrator`)
+- **Activity Functions**: 
+  - `crawl_activity`: Crawls individual websites
+  - `save_to_blob_activity`: Saves content to Azure Blob Storage
+- **Blob Output**: Stores crawled content in Azure Storage
+
+For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Prerequisites
+
+- Python 3.10 or higher
+- Azure subscription
+- Azure Function Core Tools 4.x
+- Visual Studio Code (recommended)
+- Azure Functions extension for VS Code
+
+### For Local Development:
+- Azurite (Azure Storage emulator)
+- Postman or similar API testing tool
 
 ## Getting Started
 
-### Prerequisites
-- Download Python 3.10 or higher.
-    - https://www.python.org/downloads/
-- Download Azure Function Core Tools.
-    - https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local
-- An Azure Subscription.
-    - https://azure.microsoft.com/en-us/free
-- Visual Studio Code.
-    - https://code.visualstudio.com/download
+### 1. Clone the Repository
 
-- For Local Testing:
-    - Azurite Extension on VS Code.
-        - https://marketplace.visualstudio.com/items?itemName=Azurite.azurite
-    - Postman.
-        - https://www.postman.com/downloads/
+```bash
+git clone https://github.com/YOUR-USERNAME/functions-python-web-crawler.git
+cd functions-python-web-crawler
+```
 
+### 2. Set Up Python Environment
 
-### Quickstart
-1. git clone https://github.com/Azure-Samples/functions-python-web-crawler.git
-2. Open the project folder from Visual Studio Code.
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-Local Testing:
-1. If not created, create local.settings.json.
-2. In local.settings.json, add the following:
-    
-    ```
+### 3. Configure Local Settings
+
+Create a `local.settings.json` file (ignored by git):
+
+```json
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true"
+  }
+}
+```
+
+### 4. Configure Websites to Crawl
+
+Edit `websites.json` to add your target websites:
+
+```json
+{
+  "websites": [
     {
-        "IsEncrypted": false,
-        "Values": {  
-            "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-            "FUNCTIONS_WORKER_RUNTIME": "python",
-            "AzureWebJobsFeatureFlags": "EnableWorkerIndexing"
-        }
+      "url": "https://example.com",
+      "name": "Example Site"
     }
-    ```
+  ]
+}
+```
 
-3. If not installed, download the "Azurite" extension on Visual Studio Code.
-  Info: Azurite is an open-source emulator providing a free local environment for testing Azure storage applications.
-4. At the top of the Visual Studio Code menu, select:
-  View -> Command Palette... -> Azurite: Start
-5. At the top of the Visual Studio Code menu, select:
-    Run -> Start Debugging OR Start Without Debugging
-6. If not installed, download Postman.
-7. On Postman:
-    1. Set the request type to "POST"
-    2. Paste the following to the URL Request: http://localhost:7071/api/search_site
-    3. Select "Body" -> "raw"
-    4. Paste the following to the JSON body:
+### 5. Run Locally
 
-    ```    
-        {
-           "url": "{ANY_URL_YOU_WANT_TO_TRY}"
-        }
-    ```
-    
-    Sample URLs to try:
-    1.  https://azure.microsoft.com/en-US
-    2.  https://www.pluralsight.com/
-    3.  https://www.linkedin.com/
+1. Start Azurite (Azure Storage emulator):
+   - In VS Code: `View` → `Command Palette` → `Azurite: Start`
 
-Azure Testing:
-1. If not installed, download the "Azure" extension on Visual Studio Code.
-2. Click the "Azure" extension and authenticate using your Azure credentials.
-3. Hover the mouse over "WORKSPACE Local", and click on the Azure Function icon (a yellow Lightning bolt between blue arrows) and select "Create Function App in Azure..."
-4. Follow the prompts: Select your Azure Subscription, name your Function App, select a runtime (ex. Python 3.11).
-5. When the Function App is provisioned, hover the mouse over "WORKSPACE Local", and click "Deploy to Function App..." -> Select your Subscription and Function App resource.
-6. After your code is deployed, navigate to the Function App.
-7. Select the function name "search_site" under "Functions" in the main Azure Function blade.
-8. Select "Get Function URL" and copy the link.
-9. On Postman:
-    1. Set the request type to "POST"
-    2. Paste the link you copied to the URL Request
-    3. Select "Body" -> "raw"
-    4. Paste the following to the JSON body:
-        
-    ```
-        {
-           "url": "{ANY_URL_YOU_WANT_TO_TRY}"
-        }
-    ```
+2. Run the function:
+   ```bash
+   func start
+   ```
 
-    Sample URLs to try:
-    1.  https://azure.microsoft.com/en-US
-    2.  https://www.pluralsight.com/
-    3.  https://www.linkedin.com/
+3. Test the endpoint:
+   - URL: `http://localhost:7071/api/crawl_orchestrator_http`
+   - Method: `POST`
+   - No body required (uses websites.json)
 
+## Deployment to Azure
+
+### Prerequisites
+
+1. **Create Azure Resources**:
+   - Resource Group
+   - Function App (Python 3.10+)
+   - Storage Account
+
+2. **Create Resource Reference File** (optional):
+   
+   Create `AZURE_RESOURCE_REFERENCE.md` in your local copy (ignored by git):
+   ```markdown
+   # Azure Resource Reference
+   
+   - Resource Group: `your-resource-group`
+   - Function App: `your-function-app`
+   - Storage Account: `your-storage-account`
+   - Subscription ID: `your-subscription-id`
+   ```
+
+### Deployment Steps
+
+1. **Create Deployment Package**:
+   ```bash
+   # Create deployment ZIP
+   zip -r v1.0.0-deployment.zip . \
+     -x "*.git*" -x "*.vscode*" -x "*__pycache__*" \
+     -x "*.venv*" -x "*tests*" -x "*.zip"
+   ```
+
+2. **Deploy to Azure**:
+   ```bash
+   az functionapp deployment source config-zip \
+     --resource-group YOUR_RESOURCE_GROUP \
+     --name YOUR_FUNCTION_APP \
+     --src v1.0.0-deployment.zip \
+     --subscription YOUR_SUBSCRIPTION_ID
+   ```
+
+3. **Configure Application Settings**:
+   ```bash
+   az functionapp config appsettings set \
+     --resource-group YOUR_RESOURCE_GROUP \
+     --name YOUR_FUNCTION_APP \
+     --settings STORAGE_CONNECTION_STRING="YOUR_STORAGE_CONNECTION_STRING"
+   ```
+
+For detailed deployment instructions, see [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Usage
+
+### API Endpoint
+
+**POST** `/api/crawl_orchestrator_http`
+
+Starts the web crawl orchestration for all websites defined in `websites.json`.
+
+**Response**:
+```json
+{
+  "id": "orchestration-instance-id",
+  "statusQueryGetUri": "http://...",
+  "sendEventPostUri": "http://...",
+  "terminatePostUri": "http://...",
+  "purgeHistoryDeleteUri": "http://..."
+}
+```
+
+### Monitoring Progress
+
+Use the `statusQueryGetUri` from the response to check orchestration status:
+
+```bash
+curl "https://your-function-app.azurewebsites.net/runtime/webhooks/durabletask/instances/{instanceId}"
+```
+
+## Project Structure
+
+```
+functions-python-web-crawler/
+├── function_app.py          # Main application code
+├── requirements.txt         # Python dependencies
+├── host.json               # Function host configuration
+├── websites.json           # Website configuration
+├── local.settings.json     # Local settings (not in git)
+├── .funcignore            # Files to ignore during deployment
+├── .gitignore             # Git ignore rules
+├── docs/                  # Documentation
+│   ├── API.md            # API documentation
+│   ├── ARCHITECTURE.md   # Architecture details
+│   └── DEPLOYMENT.md     # Deployment guide
+├── archive/               # Previous deployment artifacts
+└── tests/                 # Test files (optional)
+```
+
+## Configuration
+
+### Environment Variables
+
+- `AzureWebJobsStorage`: Azure Storage connection string for Functions runtime
+- `STORAGE_CONNECTION_STRING`: Azure Storage connection string for blob output
+- `FUNCTIONS_WORKER_RUNTIME`: Set to `python`
+- `AzureWebJobsFeatureFlags`: Set to `EnableWorkerIndexing`
+
+### websites.json
+
+Configure websites to crawl:
+
+```json
+{
+  "websites": [
+    {
+      "url": "https://example.com",
+      "name": "Example Site"
+    },
+    {
+      "url": "https://another-example.com",
+      "name": "Another Example"
+    }
+  ]
+}
+```
+
+## Monitoring and Logging
+
+The application includes comprehensive logging and integrates with Application Insights:
+
+- All activities are logged with INFO level
+- Errors are captured with ERROR level and full stack traces
+- Orchestration progress can be monitored via Durable Functions status endpoints
+- Application Insights provides detailed telemetry and diagnostics
+
+## Development
+
+### Running Tests
+
+```bash
+python tests/run_tests.py
+```
+
+### Code Style
+
+This project follows PEP 8 conventions. Key guidelines:
+- Use `snake_case` for functions and variables
+- Use `PascalCase` for classes
+- Include docstrings for all functions
+- Use type hints where appropriate
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"No module named 'azure.durable_task'"**
+   - Ensure all dependencies are installed: `pip install -r requirements.txt`
+
+2. **"AzureWebJobsStorage not found"**
+   - Check `local.settings.json` configuration
+   - Ensure Azurite is running for local development
+
+3. **"Failed to crawl website"**
+   - Check website URL is accessible
+   - Verify network connectivity
+   - Review function logs for detailed error messages
+
+For more troubleshooting tips, see [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## API Documentation
+
+For detailed API documentation, see [API.md](docs/API.md).
+
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes and version history.
+
+See [VERSION-TRACKING.md](VERSION-TRACKING.md) for deployment tracking.
 
 ## Resources
 
-Additional information:
-
-- Python Azure Functions:
-    - https://learn.microsoft.com/en-us/azure/azure-functions/create-first-function-vs-code-python?pivots=python-mode-decorators
-- Azure Functions Python Developer Guide:
-    - https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-python?tabs=asgi%2Capplication-level&pivots=python-mode-decorators
-- BeautifulSoup4:
-    - https://beautiful-soup-4.readthedocs.io/en/latest/
+- [Azure Functions Python Developer Guide](https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-python?tabs=asgi%2Capplication-level&pivots=python-mode-decorators)
+- [Azure Durable Functions](https://learn.microsoft.com/en-us/azure/azure-functions/durable/durable-functions-overview)
+- [BeautifulSoup4 Documentation](https://beautiful-soup-4.readthedocs.io/en/latest/)
+- [Azure Functions Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local)
 
 ## Contributing
-This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-This project has adopted the Microsoft Open Source Code of Conduct. For more information see the Code of Conduct FAQ or contact opencode@microsoft.com with any additional questions or comments.
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution.
+
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately. Simply follow the instructions provided by the bot.
+
+## License
+
+This project is licensed under the MIT License - see [LICENSE.md](LICENSE.md) for details.
+
+## Support
+
+For issues and questions:
+- Create an issue in this repository
+- Check existing documentation in the `docs/` folder
+- Review the troubleshooting section above

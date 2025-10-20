@@ -396,3 +396,68 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+####################
+# Azure Functions Python Project
+####################
+
+# Python virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Azure Functions
+local.settings.json
+.python_packages/
+__blobstorage__/
+__queuestorage__/
+__azurite_db*__.json
+.azure/
+
+# Deployment artifacts
+*.zip
+*-deployment.zip
+v*.zip
+
+# Deployment documentation (temporary)
+DEPLOYMENT-v*.md
+HOTFIX-*.md
+PHASE-*.md
+DEBUG-*.md
+FIX-*.md
+
+# Test and debug files
+tests/__pycache__/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+.hypothesis/
+
+# Temporary files
+temp-*/
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+*.code-workspace
+
+# Archive (keep in repo but ignore new additions)
+# archive/
+
+# Azure-specific configuration (user should create their own)
+AZURE_RESOURCE_REFERENCE.md

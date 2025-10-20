@@ -1,0 +1,48 @@
+# Azure Resource Reference Template
+
+This file is a template for tracking your Azure resources. Copy this file to `AZURE_RESOURCE_REFERENCE.md` and fill in your specific resource names.
+
+**Note**: `AZURE_RESOURCE_REFERENCE.md` is ignored by git to keep your resource names private.
+
+## Your Azure Resources
+
+Replace the placeholder values below with your actual Azure resource names:
+
+```markdown
+# Azure Resource Reference
+
+## Resource Information
+
+- **Resource Group**: `your-resource-group-name`
+- **Function App**: `your-function-app-name`
+- **Storage Account**: `your-storage-account-name`
+- **Subscription ID**: `your-subscription-id`
+- **Region**: `your-azure-region` (e.g., eastus, westeurope)
+
+## Deployment Command Template
+
+```bash
+az functionapp deployment source config-zip \
+  --resource-group your-resource-group-name \
+  --name your-function-app-name \
+  --src vX.X.X-deployment.zip \
+  --subscription your-subscription-id
+```
+
+## Connection Strings
+
+- **Storage Connection String**: (Get from Azure Portal or Azure CLI)
+
+```bash
+az storage account show-connection-string \
+  --name your-storage-account-name \
+  --resource-group your-resource-group-name
+```
+
+## Notes
+
+Add any additional notes about your Azure environment here:
+- Environment (dev/staging/prod)
+- Special configurations
+- Team contacts
+```

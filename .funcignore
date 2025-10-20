@@ -1,8 +1,51 @@
+# Git and version control
 .git*
-.vscode
+.github/
+
+# IDE and editor files
+.vscode/
+*.code-workspace
+
+# Azure local development
 __azurite_db*__.json
-__blobstorage__
-__queuestorage__
+__blobstorage__/
+__queuestorage__/
 local.settings.json
-test
-.venv
+
+# Python virtual environment and cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Tests
+tests/
+test/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation (not needed in deployed function)
+docs/
+*.md
+!README.md
+
+# Deployment artifacts
+*.zip
+*-deployment.zip
+archive/
+
+# Temporary files
+temp-*/
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Azure-specific configuration
+AZURE_RESOURCE_REFERENCE.md
