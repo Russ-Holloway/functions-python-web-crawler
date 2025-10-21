@@ -584,11 +584,22 @@ def capture_html_guidance(url, site_name="Unknown"):
         dict: Result with success status, content, metadata
     """
     try:
-        # Enhanced headers to avoid bot detection
+        # Enhanced headers to avoid bot detection - full browser simulation
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-GB,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Sec-Ch-Ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+            'Connection': 'keep-alive'
         }
         
         req = urllib.request.Request(url, headers=headers)
@@ -966,10 +977,22 @@ def crawl_website_core(site_config, previous_hashes=None):
                 try:
                     logging.info(f'Crawling category {i+1}/{max_categories}: {category_url}')
                     
-                    # Download category page
+                    # Download category page with full browser headers
                     headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'en-GB,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Sec-Ch-Ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Cache-Control': 'max-age=0',
+                        'Connection': 'keep-alive'
                     }
                     req = urllib.request.Request(category_url, headers=headers)
                     with urllib.request.urlopen(req, timeout=15) as response:
@@ -1005,6 +1028,12 @@ def crawl_website_core(site_config, previous_hashes=None):
                     # Be respectful - add delay
                     time.sleep(1)
                     
+                except urllib.error.HTTPError as e:
+                    if e.code == 403:
+                        logging.error(f'❌ Category page BLOCKED (403): {category_url} - bot detection active')
+                    else:
+                        logging.warning(f'HTTP error {e.code} crawling category page {category_url}: {str(e)}')
+                    continue
                 except Exception as e:
                     logging.warning(f'Failed to crawl category page {category_url}: {str(e)}')
                     continue
