@@ -3059,6 +3059,67 @@ def manage_websites(req: func.HttpRequest) -> func.HttpResponse:
 # SIMPLE TEST ENDPOINT - VERIFY DEPLOYMENT
 # ============================================================================
 
+@app.route(route="diagnostic", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def diagnostic(req: func.HttpRequest) -> func.HttpResponse:
+    """Diagnostic endpoint to check storage folders and document counts"""
+    logging.info('Diagnostic endpoint called')
+    
+    try:
+        # Get storage statistics
+        storage_stats = get_storage_statistics()
+        
+        if "error" in storage_stats:
+            return func.HttpResponse(
+                json.dumps({"error": storage_stats["error"]}),
+                status_code=500,
+                mimetype="application/json"
+            )
+        
+        # Get document hashes to check what we think is stored
+        doc_hashes = get_document_hashes_from_storage()
+        
+        # Organize hashes by website
+        hashes_by_site = {}
+        for url, hash_info in doc_hashes.items():
+            unique_filename = hash_info.get("unique_filename", "")
+            if '/' in unique_filename:
+                site_folder = unique_filename.split('/')[0]
+                if site_folder not in hashes_by_site:
+                    hashes_by_site[site_folder] = []
+                hashes_by_site[site_folder].append({
+                    "url": url,
+                    "filename": hash_info.get("filename"),
+                    "unique_filename": unique_filename,
+                    "last_seen": hash_info.get("last_seen")
+                })
+        
+        return func.HttpResponse(
+            json.dumps({
+                "message": "Diagnostic information",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "storage_stats": {
+                    "total_documents": storage_stats.get("total_documents", 0),
+                    "total_size_mb": storage_stats.get("total_size_mb", 0),
+                    "site_breakdown": storage_stats.get("site_breakdown", {})
+                },
+                "document_hashes": {
+                    "total_tracked": len(doc_hashes),
+                    "by_site_folder": {k: len(v) for k, v in hashes_by_site.items()},
+                    "sample_per_site": {k: v[:3] for k, v in hashes_by_site.items()}  # First 3 from each site
+                }
+            }, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'Diagnostic error: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
 @app.route(route="ping", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def ping(req: func.HttpRequest) -> func.HttpResponse:
     """Ultra-simple test endpoint to verify function app is working"""
@@ -3068,7 +3129,7 @@ def ping(req: func.HttpRequest) -> func.HttpResponse:
             "status": "alive",
             "message": "Function app is running",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "version": "v2.4.2"
+            "version": "v2.7.1"
         }),
         status_code=200,
         mimetype="application/json"
