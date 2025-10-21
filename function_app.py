@@ -30,15 +30,20 @@ class HTMLContentExtractor(HTMLParser):
         self.current_tag = tag
         attrs_dict = dict(attrs)
         
-        # Detect main content areas
-        if tag in ['main', 'article']:
+        # Detect main content areas - be more permissive for College of Policing
+        if tag in ['main', 'article', 'section']:
             self.in_main_content = True
         elif 'class' in attrs_dict:
             classes = attrs_dict['class'].lower()
-            if any(x in classes for x in ['main-content', 'content', 'guidance', 'article-body']):
+            # Look for common content indicators
+            if any(x in classes for x in ['main-content', 'content', 'guidance', 'article', 'page-content', 'body', 'col8']):
                 self.in_main_content = True
-            elif any(x in classes for x in ['nav', 'navigation', 'menu', 'sidebar']):
+            elif any(x in classes for x in ['nav', 'navigation', 'menu', 'sidebar', 'header', 'footer']):
                 self.in_navigation = True
+        elif 'id' in attrs_dict:
+            id_val = attrs_dict['id'].lower()
+            if any(x in id_val for x in ['main-content', 'content', 'guidance', 'article']):
+                self.in_main_content = True
         
         # Detect navigation/header/footer areas to skip
         if tag in ['nav', 'header', 'footer']:
@@ -50,7 +55,7 @@ class HTMLContentExtractor(HTMLParser):
                 self.in_footer = True
     
     def handle_endtag(self, tag):
-        if tag in ['main', 'article']:
+        if tag in ['main', 'article', 'section']:
             self.in_main_content = False
         elif tag == 'nav':
             self.in_navigation = False
@@ -74,7 +79,7 @@ class HTMLContentExtractor(HTMLParser):
     def has_substantial_content(self):
         """Check if page has substantial guidance content (not just navigation)"""
         total_chars = sum(len(text) for text in self.content_text)
-        return total_chars > 500  # At least 500 chars of content
+        return total_chars > 200  # At least 200 chars of content (lowered from 500)
 
 class EnhancedDocumentLinkParser(HTMLParser):
     """Enhanced HTML parser to find document links with debugging"""
@@ -602,14 +607,17 @@ def capture_html_guidance(url, site_name="Unknown"):
         extractor.feed(html_content)
         
         # Check if page has substantial content
+        content_length = sum(len(text) for text in extractor.content_text)
         if not extractor.has_substantial_content():
+            logging.warning(f'Skipping {url}: Only {content_length} chars extracted (threshold: 200)')
             return {
                 "success": False,
-                "error": "Page does not contain substantial guidance content (likely navigation page)"
+                "error": f"Page does not contain substantial guidance content ({content_length} chars, need 200+)"
             }
         
         # Get extracted text content
         text_content = extractor.get_content()
+        logging.info(f'Successfully extracted {len(text_content)} chars from {url}')
         
         # Create HTML document with metadata
         html_document = f"""<!DOCTYPE html>
