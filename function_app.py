@@ -15,6 +15,67 @@ import os
 import gzip
 import io
 
+class HTMLContentExtractor(HTMLParser):
+    """Extract main content from HTML guidance pages for College of Policing"""
+    def __init__(self):
+        super().__init__()
+        self.content_text = []
+        self.in_main_content = False
+        self.in_navigation = False
+        self.in_header = False
+        self.in_footer = False
+        self.current_tag = None
+        
+    def handle_starttag(self, tag, attrs):
+        self.current_tag = tag
+        attrs_dict = dict(attrs)
+        
+        # Detect main content areas
+        if tag in ['main', 'article']:
+            self.in_main_content = True
+        elif 'class' in attrs_dict:
+            classes = attrs_dict['class'].lower()
+            if any(x in classes for x in ['main-content', 'content', 'guidance', 'article-body']):
+                self.in_main_content = True
+            elif any(x in classes for x in ['nav', 'navigation', 'menu', 'sidebar']):
+                self.in_navigation = True
+        
+        # Detect navigation/header/footer areas to skip
+        if tag in ['nav', 'header', 'footer']:
+            if tag == 'nav':
+                self.in_navigation = True
+            elif tag == 'header':
+                self.in_header = True
+            elif tag == 'footer':
+                self.in_footer = True
+    
+    def handle_endtag(self, tag):
+        if tag in ['main', 'article']:
+            self.in_main_content = False
+        elif tag == 'nav':
+            self.in_navigation = False
+        elif tag == 'header':
+            self.in_header = False
+        elif tag == 'footer':
+            self.in_footer = False
+        self.current_tag = None
+    
+    def handle_data(self, data):
+        # Only capture text from main content, skip navigation/header/footer
+        if self.in_main_content and not self.in_navigation and not self.in_header and not self.in_footer:
+            text = data.strip()
+            if text and len(text) > 10:  # Skip very short snippets
+                self.content_text.append(text)
+    
+    def get_content(self):
+        """Get extracted content as formatted text"""
+        return '\n\n'.join(self.content_text)
+    
+    def has_substantial_content(self):
+        """Check if page has substantial guidance content (not just navigation)"""
+        total_chars = sum(len(text) for text in self.content_text)
+        return total_chars > 500  # At least 500 chars of content
+
 class EnhancedDocumentLinkParser(HTMLParser):
     """Enhanced HTML parser to find document links with debugging"""
     def __init__(self):
@@ -384,6 +445,8 @@ def upload_to_blob_storage_real(content, filename, storage_account="stbtpuksprod
             req.add_header("Content-Type", "application/xml")
         elif filename.lower().endswith('.csv'):
             req.add_header("Content-Type", "text/csv")
+        elif filename.lower().endswith('.html') or filename.lower().endswith('.htm'):
+            req.add_header("Content-Type", "text/html; charset=utf-8")
         else:
             req.add_header("Content-Type", "application/octet-stream")
         
@@ -454,6 +517,141 @@ def download_document(url):
         }
     except Exception as e:
         logging.error(f'Document download failed: {str(e)}')
+        return {"success": False, "error": str(e)}
+
+def is_guidance_page(url):
+    """Determine if URL is likely a guidance content page (not navigation/listing)
+    
+    Used for College of Policing APP guidance which is web-based, not downloadable files.
+    
+    Args:
+        url: URL to check
+        
+    Returns:
+        bool: True if likely a guidance page
+    """
+    # College of Policing APP guidance patterns
+    app_guidance_patterns = [
+        r'/app/[^/]+/[^/]+',  # /app/category/topic (e.g., /app/armed-policing/legal-framework)
+        r'/app/[^/]+/[^/]+/[^/]+',  # /app/category/topic/subtopic
+    ]
+    
+    # Exclude navigation/listing pages
+    navigation_indicators = [
+        '/app/search',
+        '/app/categories',
+        '/app/?$',  # Just /app or /app/
+        '/app$',
+    ]
+    
+    # Check if it's a navigation page (exclude these)
+    for pattern in navigation_indicators:
+        if re.search(pattern, url, re.IGNORECASE):
+            return False
+    
+    # Check if it matches guidance patterns
+    for pattern in app_guidance_patterns:
+        if re.search(pattern, url, re.IGNORECASE):
+            return True
+    
+    return False
+
+def capture_html_guidance(url, site_name="Unknown"):
+    """Capture HTML content from guidance pages
+    
+    Used for sites like College of Policing where guidance is web-based, not downloadable.
+    Extracts main content and saves as HTML document.
+    
+    Args:
+        url: URL of guidance page
+        site_name: Name of source website
+        
+    Returns:
+        dict: Result with success status, content, metadata
+    """
+    try:
+        # Enhanced headers to avoid bot detection
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-GB,en;q=0.9',
+        }
+        
+        req = urllib.request.Request(url, headers=headers)
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw_content = response.read()
+            
+            # Handle gzip encoding
+            if response.info().get('Content-Encoding') == 'gzip':
+                html_content = gzip.decompress(raw_content).decode('utf-8')
+            else:
+                html_content = raw_content.decode('utf-8')
+        
+        # Extract main content
+        extractor = HTMLContentExtractor()
+        extractor.feed(html_content)
+        
+        # Check if page has substantial content
+        if not extractor.has_substantial_content():
+            return {
+                "success": False,
+                "error": "Page does not contain substantial guidance content (likely navigation page)"
+            }
+        
+        # Get extracted text content
+        text_content = extractor.get_content()
+        
+        # Create HTML document with metadata
+        html_document = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="source" content="{site_name}">
+    <meta name="source-url" content="{url}">
+    <meta name="captured-date" content="{datetime.now(timezone.utc).isoformat()}">
+    <title>Guidance from {site_name}</title>
+</head>
+<body>
+    <div class="guidance-content">
+        <h1>Source: {site_name}</h1>
+        <p><strong>URL:</strong> <a href="{url}">{url}</a></p>
+        <p><strong>Captured:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+        <hr>
+        <div class="content">
+            {text_content.replace(chr(10), '<br>' + chr(10))}
+        </div>
+    </div>
+</body>
+</html>"""
+        
+        # Convert to bytes for consistent handling with binary documents
+        content_bytes = html_document.encode('utf-8')
+        
+        # Generate filename from URL
+        # Extract meaningful name from URL path
+        url_path = urllib.parse.urlparse(url).path
+        path_parts = [p for p in url_path.split('/') if p]
+        if path_parts:
+            filename_base = '-'.join(path_parts[-2:]) if len(path_parts) >= 2 else path_parts[-1]
+        else:
+            filename_base = 'guidance'
+        
+        # Sanitize and add extension
+        filename_base = re.sub(r'[^a-zA-Z0-9-]', '_', filename_base)[:100]
+        filename = f"{filename_base}.html"
+        
+        return {
+            "success": True,
+            "content": content_bytes,
+            "content_type": "text/html",
+            "size": len(content_bytes),
+            "filename": filename,
+            "text_length": len(text_content)
+        }
+        
+    except Exception as e:
+        logging.error(f'HTML guidance capture failed for {url}: {str(e)}')
         return {"success": False, "error": str(e)}
 
 def calculate_content_hash(content):
@@ -709,8 +907,50 @@ def crawl_website_core(site_config, previous_hashes=None):
         all_documents = parse_result["documents"]
         logging.info(f'Found {len(all_documents)} Level 1 documents on {site_name}')
         
-        # Multi-level crawling if enabled
-        if site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
+        # HTML Guidance Capture Mode (for College of Policing APP and similar sites)
+        # If enabled, capture web-based guidance pages as HTML documents
+        if site_config.get("capture_html_guidance", False):
+            logging.info(f'HTML guidance capture enabled for {site_name} - will capture web-based guidance pages')
+            
+            # Parse the main page to find all relevant links
+            parser = EnhancedDocumentLinkParser()
+            parser.feed(content)
+            
+            # Filter for guidance page URLs (not navigation/listing pages)
+            guidance_pages = []
+            for link in parser.all_links:
+                # Convert to absolute URL
+                if link.startswith(('http://', 'https://')):
+                    full_url = link
+                elif link.startswith('/'):
+                    base = urllib.parse.urlparse(site_url)
+                    full_url = f"{base.scheme}://{base.netloc}{link}"
+                else:
+                    full_url = urllib.parse.urljoin(site_url, link)
+                
+                # Check if it's a guidance page
+                if is_guidance_page(full_url):
+                    guidance_pages.append({
+                        "url": full_url,
+                        "filename": full_url.split('/')[-1] or "guidance",
+                        "type": "html_guidance",
+                        "extension": "html"
+                    })
+            
+            logging.info(f'Found {len(guidance_pages)} guidance pages to capture for {site_name}')
+            
+            # Limit to reasonable number for first implementation
+            max_guidance_pages = site_config.get("max_guidance_pages", 50)
+            if len(guidance_pages) > max_guidance_pages:
+                logging.info(f'Limiting to first {max_guidance_pages} guidance pages')
+                guidance_pages = guidance_pages[:max_guidance_pages]
+            
+            # Add guidance pages to documents list
+            all_documents.extend(guidance_pages)
+            logging.info(f'Total items to process: {len(all_documents)} (includes {len(guidance_pages)} HTML guidance pages)')
+        
+        # Multi-level crawling if enabled (for traditional document discovery)
+        elif site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
             max_depth = site_config.get("max_depth", 2)
             logging.info(f'Starting multi-level crawl for {site_name} (max depth: {max_depth})')
             
@@ -759,20 +999,43 @@ def crawl_website_core(site_config, previous_hashes=None):
         collision_count = 0
         
         # Filter out non-document files (unknown extensions are likely HTML pages, not documents)
-        actual_documents = [doc for doc in all_documents if doc.get("extension") != "unknown"]
-        skipped_count = len(all_documents) - len(actual_documents)
-        
-        if skipped_count > 0:
-            logging.info(f'Filtered out {skipped_count} non-document links (unknown extension - likely HTML pages)')
-            logging.info(f'Processing {len(actual_documents)} actual document files')
+        # BUT: Keep html_guidance type for sites with capture_html_guidance enabled
+        if site_config.get("capture_html_guidance", False):
+            # Keep all documents including HTML guidance
+            actual_documents = [doc for doc in all_documents if doc.get("extension") != "unknown" or doc.get("type") == "html_guidance"]
+            skipped_count = len(all_documents) - len(actual_documents)
+            html_guidance_count = len([doc for doc in actual_documents if doc.get("type") == "html_guidance"])
+            logging.info(f'Processing {len(actual_documents)} items (including {html_guidance_count} HTML guidance pages)')
+        else:
+            # Standard filtering - exclude unknown extensions
+            actual_documents = [doc for doc in all_documents if doc.get("extension") != "unknown"]
+            skipped_count = len(all_documents) - len(actual_documents)
+            
+            if skipped_count > 0:
+                logging.info(f'Filtered out {skipped_count} non-document links (unknown extension - likely HTML pages)')
+                logging.info(f'Processing {len(actual_documents)} actual document files')
         
         # Process documents with change detection
         for i, doc in enumerate(actual_documents):
             try:
                 logging.info(f'Processing document {i+1}/{len(actual_documents)} - {doc["filename"]} ({doc.get("extension")})')
                 
-                # Download document
-                download_result = download_document(doc["url"])
+                # Check if this is an HTML guidance page that needs special handling
+                if doc.get("type") == "html_guidance":
+                    logging.info(f'Capturing HTML guidance from: {doc["url"]}')
+                    download_result = capture_html_guidance(doc["url"], site_name)
+                    
+                    # If capture failed, skip this document
+                    if not download_result["success"]:
+                        logging.warning(f'Skipping {doc["url"]}: {download_result.get("error")}')
+                        continue
+                    
+                    # Use the generated filename from capture_html_guidance
+                    doc["filename"] = download_result["filename"]
+                    logging.info(f'Captured {download_result["text_length"]} chars of guidance content')
+                else:
+                    # Standard document download
+                    download_result = download_document(doc["url"])
                 
                 if download_result["success"]:
                     current_hash = calculate_content_hash(download_result["content"])

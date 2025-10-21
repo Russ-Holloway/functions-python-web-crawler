@@ -1,5 +1,66 @@
 ## Functions Python Web Crawler Changelog
 
+<a name="2.8.0"></a>
+# 2.8.0 (2025-10-21)
+
+*Major Feature*
+* **HTML Guidance Capture:** New capability to capture web-based guidance content as HTML documents
+* **College of Policing Support:** APP (Authorised Professional Practice) guidance now fully captured
+* **Intelligent Content Extraction:** Automatically extracts main content, filters out navigation/headers/footers
+* **Smart Page Detection:** Distinguishes guidance pages from navigation/listing pages
+* **Configurable Limits:** Set max guidance pages per site via `max_guidance_pages` config
+
+*New Features*
+* **HTMLContentExtractor Class:** Intelligent HTML parser that extracts only main guidance content
+  - Identifies content areas (main, article tags with content classes)
+  - Filters out navigation, headers, footers automatically
+  - Validates substantial content (>500 chars) to avoid navigation pages
+* **Guidance Page Detection:** `is_guidance_page()` function identifies actual guidance vs navigation
+  - Pattern matching for College of Policing URL structure (`/app/category/topic`)
+  - Excludes search, categories, and listing pages
+  - Extensible for other web-based guidance sites
+* **HTML Guidance Capture:** `capture_html_guidance()` function downloads and formats guidance
+  - Extracts text content with HTMLContentExtractor
+  - Creates formatted HTML document with source metadata
+  - Generates meaningful filenames from URL structure
+  - Returns content in same format as document downloads
+* **Capture Mode:** New `capture_html_guidance` configuration flag
+  - Enables HTML capture for specific sites
+  - Works alongside traditional multi-level crawling
+  - Discovers guidance pages from main page links
+  - Configurable page limit (default 50)
+
+*Technical Changes*
+* Added HTMLContentExtractor class (lines 18-75) for intelligent HTML parsing
+* Added is_guidance_page() function (lines 569-603) for page type detection
+* Added capture_html_guidance() function (lines 605-688) for content capture
+* Enhanced crawl_website_core() with capture_html_guidance mode (lines 947-987)
+* Enhanced document processing to handle HTML guidance (lines 1033-1060)
+* Updated upload_to_blob_storage_real() to handle HTML content type (lines 442-452)
+* Updated websites.json: College of Policing now uses capture_html_guidance mode
+
+*Configuration*
+```json
+{
+  "id": "college_of_policing",
+  "capture_html_guidance": true,
+  "max_guidance_pages": 100
+}
+```
+
+*Benefits*
+* Officers can now access essential College of Policing APP guidance through document monitor
+* Automatic updates via hash-based change detection
+* Searchable HTML content in Azure AI Search
+* Full metadata support for filtering and categorization
+* No impact on existing document-based crawling
+
+*Expected Results*
+* College of Policing: 50-100 HTML documents captured
+* File naming: `college-of-policing-app-portal/hash_armed-policing-legal-framework.html`
+* Change detection: Updates when guidance content changes
+* Storage: Same `documents` container with proper folder organization
+
 <a name="2.7.0"></a>
 # 2.7.0 (2025-10-21)
 

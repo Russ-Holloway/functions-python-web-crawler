@@ -1,10 +1,137 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.7.0 (Fixed 'Other' Category Issue - Ready to Deploy)
+## Current Version: v2.8.0 (HTML Guidance Capture - Ready to Test)
 
 ---
 
 ## Version History
+
+### v2.8.0 - HTML Guidance Capture Feature (MAJOR FEATURE)
+**Status**: 🧪 **TESTING**  
+**Date**: October 21, 2025  
+**Type**: Major Feature - HTML Content Capture
+
+**Problem Solved:**
+College of Policing APP guidance is published as web pages, not downloadable files. Officers need access to this essential guidance, but the crawler was designed only for downloadable documents (PDFs, DOCs, etc.). This meant critical policing guidance was not being captured.
+
+**Solution:**
+Implemented HTML guidance capture capability that:
+1. Detects guidance content pages vs navigation pages
+2. Extracts main content (excluding navigation/headers/footers)
+3. Saves as searchable HTML documents in storage
+4. Maintains full hash-based change detection
+5. Preserves all document monitoring functionality
+
+**Changes Made:**
+
+1. ✅ **New HTMLContentExtractor Class** (lines 18-75)
+   - Intelligently parses HTML to extract main content
+   - Filters out navigation, headers, footers
+   - Validates substantial content exists (>500 chars)
+
+2. ✅ **New is_guidance_page() Function** (lines 569-603)
+   - Detects College of Policing APP guidance URLs
+   - Excludes navigation/search/category pages
+   - Pattern matching: `/app/category/topic` structure
+
+3. ✅ **New capture_html_guidance() Function** (lines 605-688)
+   - Downloads and extracts HTML content
+   - Creates formatted HTML document with metadata
+   - Generates meaningful filenames from URL structure
+   - Returns content in same format as document downloads
+
+4. ✅ **Enhanced crawl_website_core()** (lines 947-987)
+   - New `capture_html_guidance` mode alongside `multi_level`
+   - Discovers guidance page URLs from main page
+   - Filters for actual guidance vs navigation
+   - Limits to configurable max (default 50, College: 100)
+
+5. ✅ **Enhanced Document Processing** (lines 1033-1060)
+   - Handles both traditional docs and HTML guidance
+   - Calls capture_html_guidance() for guidance pages
+   - Maintains same change detection workflow
+   - Skips pages without substantial content
+
+6. ✅ **Updated upload_to_blob_storage_real()** (lines 442-452)
+   - Added HTML content type handling
+   - Sets proper charset for HTML files
+   - Maintains all existing metadata
+
+7. ✅ **Updated websites.json Configuration**
+   - Enabled `capture_html_guidance: true` for College of Policing
+   - Set `max_guidance_pages: 100`
+   - Changed to single-level crawl (guidance discovery mode)
+
+**Technical Implementation:**
+```python
+# Guidance page detection
+if site_config.get("capture_html_guidance", False):
+    guidance_pages = [link for link in all_links if is_guidance_page(link)]
+
+# HTML content capture
+download_result = capture_html_guidance(doc["url"], site_name)
+
+# Formatted HTML document with metadata
+html_document = f"""<!DOCTYPE html>
+<head>
+    <meta name="source" content="{site_name}">
+    <meta name="captured-date" content="{timestamp}">
+</head>
+<body>
+    <div class="guidance-content">{extracted_text}</div>
+</body>
+</html>"""
+```
+
+**Benefits:**
+- ✅ Officers access essential APP guidance through document monitor
+- ✅ Automatic updates via hash-based change detection
+- ✅ Searchable HTML content in Azure AI Search
+- ✅ Full metadata for filtering and categorization
+- ✅ Maintains all existing document monitoring features
+- ✅ No impact on other sites (opt-in via config)
+
+**Configuration:**
+```json
+{
+  "id": "college_of_policing",
+  "capture_html_guidance": true,
+  "max_guidance_pages": 100
+}
+```
+
+**Expected Results:**
+- College of Policing: 50-100 HTML documents captured
+- File structure: `college-of-policing-app-portal/hash_armed-policing-legal-framework.html`
+- Change detection: Updates when guidance content changes
+- Storage: Same `documents` container as all other docs
+
+**Testing Required:**
+1. Test crawl College of Policing
+2. Verify HTML documents stored correctly
+3. Check content extraction quality
+4. Confirm change detection works
+5. Validate metadata and categorization
+
+---
+
+### v2.7.5 - Enable Multi-Level for College of Policing (CONFIGURATION FIX)
+**Status**: ✅ **DEPLOYED - DID NOT SOLVE ISSUE**  
+**Date**: October 21, 2025  
+**Type**: Configuration Change
+
+**Issue:** College of Policing still showing 0 documents despite fixes in v2.7.3 and v2.7.4.
+
+**Root Cause Analysis:**
+Configuration had `multi_level: false` for College of Policing, preventing discovery of documents on sub-pages.
+
+**Changes:**
+- ✅ Changed `websites.json` college_of_policing: `multi_level: false` → `true`
+- ✅ Set `max_depth: 1` (was 2, reduced for safety during testing)
+
+**Result:** Did not solve the problem - site structure is fundamentally different (web-based guidance, not downloadable files)
+
+---
 
 ### v2.7.0 - Fixed 'Other' Category Issue (BUG FIX)
 **Status**: 🚀 **READY TO DEPLOY**  
