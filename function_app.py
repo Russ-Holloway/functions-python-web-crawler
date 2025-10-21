@@ -3131,6 +3131,47 @@ def diagnostic(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
+@app.route(route="trigger_crawl", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.durable_client_input(client_name="client")
+async def trigger_crawl(req: func.HttpRequest, client) -> func.HttpResponse:
+    """
+    HTTP-triggered endpoint to manually start the full website crawl orchestration.
+    This bypasses the 4-hour timer and starts crawling immediately.
+    
+    Usage: POST to /api/trigger_crawl
+    """
+    logging.info('🚀 Manual crawl trigger: Starting orchestrated multi-website crawler')
+    
+    try:
+        # Start the orchestration (same as scheduled_crawler_orchestrated)
+        instance_id = await client.start_new('web_crawler_orchestrator', None, None)
+        
+        logging.info(f'✅ Manual crawl orchestration started with ID: {instance_id}')
+        
+        return func.HttpResponse(
+            json.dumps({
+                "status": "success",
+                "message": "Crawl orchestration started successfully",
+                "instance_id": instance_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "note": "Crawling all enabled websites in parallel. Check logs for progress."
+            }, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'❌ Error starting manual crawl orchestration: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }),
+            status_code=500,
+            mimetype="application/json"
+        )
+
 @app.route(route="ping", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def ping(req: func.HttpRequest) -> func.HttpResponse:
     """Ultra-simple test endpoint to verify function app is working"""
@@ -3140,7 +3181,7 @@ def ping(req: func.HttpRequest) -> func.HttpResponse:
             "status": "alive",
             "message": "Function app is running",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "version": "v2.7.1"
+            "version": "v2.7.3"
         }),
         status_code=200,
         mimetype="application/json"
