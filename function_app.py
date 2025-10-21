@@ -717,8 +717,11 @@ def crawl_website_core(site_config, previous_hashes=None):
             level1_count = len(all_documents)
             sub_documents_found = 0
             
-            # Crawl first 3 Level 1 documents for sub-documents (safety limit)
-            for level1_doc in all_documents[:3]:
+            # Crawl Level 1 documents for sub-documents (limit to first 100 for safety)
+            max_level1_to_crawl = min(100, len(all_documents))
+            logging.info(f'Will crawl {max_level1_to_crawl} Level 1 documents for sub-documents')
+            
+            for level1_doc in all_documents[:max_level1_to_crawl]:
                 try:
                     sub_docs = crawl_document_page_for_sub_documents(
                         level1_doc["url"],
@@ -755,10 +758,18 @@ def crawl_website_core(site_config, previous_hashes=None):
         filenames_generated = []
         collision_count = 0
         
+        # Filter out non-document files (unknown extensions are likely HTML pages, not documents)
+        actual_documents = [doc for doc in all_documents if doc.get("extension") != "unknown"]
+        skipped_count = len(all_documents) - len(actual_documents)
+        
+        if skipped_count > 0:
+            logging.info(f'Filtered out {skipped_count} non-document links (unknown extension - likely HTML pages)')
+            logging.info(f'Processing {len(actual_documents)} actual document files')
+        
         # Process documents with change detection
-        for i, doc in enumerate(all_documents):
+        for i, doc in enumerate(actual_documents):
             try:
-                logging.info(f'Processing document {i+1}/{len(all_documents)} - {doc["filename"]}')
+                logging.info(f'Processing document {i+1}/{len(actual_documents)} - {doc["filename"]} ({doc.get("extension")})')
                 
                 # Download document
                 download_result = download_document(doc["url"])
