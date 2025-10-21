@@ -939,6 +939,125 @@ def store_document_hashes_to_storage(hash_data, storage_account="stbtpuksprodcra
         logging.error(f'Error storing document hashes: {str(e)}')
         return False
 
+def delete_uncategorized_documents(storage_account="stbtpuksprodcrawler01", container="documents", dry_run=True):
+    """Delete documents that don't have a folder prefix (uncategorized documents)
+    
+    Args:
+        storage_account: Azure storage account name
+        container: Container name
+        dry_run: If True, only list files to be deleted without actually deleting
+    
+    Returns:
+        dict: Results with list of deleted/would-be-deleted files and counts
+    """
+    try:
+        access_token = get_managed_identity_token()
+        if not access_token:
+            logging.error('Failed to get access token for cleanup')
+            return {"error": "Authentication failed"}
+        
+        # List all blobs in the container
+        list_url = f"https://{storage_account}.blob.core.windows.net/{container}?restype=container&comp=list"
+        
+        req = urllib.request.Request(list_url, method='GET')
+        req.add_header('Authorization', f'Bearer {access_token}')
+        req.add_header('x-ms-version', '2021-06-08')
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            xml_data = response.read().decode('utf-8')
+        
+        # Parse XML response
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_data)
+        
+        uncategorized_files = []
+        system_files = ['document_hashes.json', 'crawl_history.json']
+        
+        # Find all blobs without folder prefix
+        for blob in root.findall('.//Blob'):
+            name_elem = blob.find('Name')
+            if name_elem is not None:
+                name = name_elem.text or ""
+                
+                # Skip system files and folder placeholders
+                if name in system_files or name.endswith('/.folder'):
+                    continue
+                
+                # Check if document has no folder prefix
+                if '/' not in name:
+                    size_elem = blob.find('Properties/Content-Length')
+                    size = int(size_elem.text) if size_elem is not None and size_elem.text else 0
+                    uncategorized_files.append({
+                        "name": name,
+                        "size": size,
+                        "size_mb": round(size / (1024 * 1024), 2)
+                    })
+        
+        if not uncategorized_files:
+            return {
+                "message": "No uncategorized documents found",
+                "count": 0,
+                "files": [],
+                "dry_run": dry_run
+            }
+        
+        deleted_files = []
+        failed_deletions = []
+        
+        if dry_run:
+            # Just return the list of files that would be deleted
+            logging.info(f'DRY RUN: Would delete {len(uncategorized_files)} uncategorized documents')
+            return {
+                "message": f"DRY RUN: Found {len(uncategorized_files)} uncategorized documents",
+                "count": len(uncategorized_files),
+                "total_size_mb": round(sum(f["size"] for f in uncategorized_files) / (1024 * 1024), 2),
+                "files": uncategorized_files,
+                "dry_run": True,
+                "note": "Set dry_run=false to actually delete these files"
+            }
+        
+        # Actually delete the files
+        for file_info in uncategorized_files:
+            try:
+                blob_url = f"https://{storage_account}.blob.core.windows.net/{container}/{file_info['name']}"
+                
+                del_req = urllib.request.Request(blob_url, method='DELETE')
+                del_req.add_header('Authorization', f'Bearer {access_token}')
+                del_req.add_header('x-ms-version', '2021-06-08')
+                
+                with urllib.request.urlopen(del_req, timeout=30) as response:
+                    if response.status == 202:
+                        deleted_files.append(file_info)
+                        logging.info(f'✅ Deleted uncategorized file: {file_info["name"]}')
+                    else:
+                        failed_deletions.append({
+                            "file": file_info["name"],
+                            "reason": f"HTTP {response.status}"
+                        })
+                        logging.warning(f'⚠️ Failed to delete {file_info["name"]}: HTTP {response.status}')
+                        
+            except Exception as del_error:
+                failed_deletions.append({
+                    "file": file_info["name"],
+                    "reason": str(del_error)
+                })
+                logging.error(f'❌ Error deleting {file_info["name"]}: {str(del_error)}')
+        
+        return {
+            "message": f"Deleted {len(deleted_files)} uncategorized documents",
+            "deleted_count": len(deleted_files),
+            "failed_count": len(failed_deletions),
+            "total_size_mb": round(sum(f["size"] for f in deleted_files) / (1024 * 1024), 2),
+            "deleted_files": deleted_files,
+            "failed_deletions": failed_deletions,
+            "dry_run": False,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logging.error(f'Error in cleanup operation: {str(e)}')
+        return {"error": str(e)}
+
 def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="documents"):
     """Analyze Azure Storage to get document statistics per website"""
     try:
@@ -979,8 +1098,8 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
                     size = int(size_elem.text) if size_elem.text and size_elem.text.isdigit() else 0
                     modified = modified_elem.text if modified_elem is not None else None
                     
-                    # Skip system files
-                    if name and name not in ['document_hashes.json', 'crawl_history.json']:
+                    # Skip system files and folder placeholders
+                    if name and name not in ['document_hashes.json', 'crawl_history.json'] and not name.endswith('/.folder'):
                         blobs.append({
                             "name": name,
                             "size": size,
@@ -1010,11 +1129,13 @@ def get_storage_statistics(storage_account="stbtpuksprodcrawler01", container="d
             # Extract the site folder prefix (before the first '/')
             if '/' in blob["name"]:
                 site_folder = blob["name"].split('/')[0].lower()
+                # Get display name from mapping or use prettified folder name
+                display_name = site_display_names.get(site_folder, site_folder.replace('-', ' ').title())
             else:
-                site_folder = "other"
-            
-            # Get display name from mapping or use prettified folder name
-            display_name = site_display_names.get(site_folder, site_folder.replace('-', ' ').title())
+                # Documents without folder prefix - log for investigation
+                logging.warning(f'⚠️  Document without folder prefix found: {blob["name"]}')
+                site_folder = "uncategorized"
+                display_name = "Uncategorized (Legacy)"
             
             # Initialize site stats if not exists
             if display_name not in site_stats:
@@ -2840,6 +2961,48 @@ def initialize_folders(req: func.HttpRequest) -> func.HttpResponse:
         
     except Exception as e:
         logging.error(f'Initialize folders error: {str(e)}')
+        return func.HttpResponse(
+            json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+@app.route(route="cleanup_uncategorized", methods=["GET", "POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def cleanup_uncategorized(req: func.HttpRequest) -> func.HttpResponse:
+    """Clean up documents without proper folder structure (uncategorized documents)
+    
+    GET: List uncategorized documents (dry run)
+    POST with {"dry_run": false}: Actually delete uncategorized documents
+    """
+    logging.info('Cleanup uncategorized endpoint called')
+    
+    try:
+        dry_run = True  # Default to dry run for safety
+        
+        if req.method == "POST":
+            try:
+                req_body = req.get_json()
+                dry_run = req_body.get('dry_run', True)
+            except:
+                dry_run = True
+        
+        result = delete_uncategorized_documents(dry_run=dry_run)
+        
+        if "error" in result:
+            return func.HttpResponse(
+                json.dumps(result),
+                status_code=500,
+                mimetype="application/json"
+            )
+        
+        return func.HttpResponse(
+            json.dumps(result, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+        
+    except Exception as e:
+        logging.error(f'Cleanup uncategorized error: {str(e)}')
         return func.HttpResponse(
             json.dumps({"error": str(e)}),
             status_code=500,

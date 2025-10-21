@@ -1,10 +1,54 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.6.0 (Smart Storage Organization + AI-Ready Metadata - Ready to Deploy)
+## Current Version: v2.7.0 (Fixed 'Other' Category Issue - Ready to Deploy)
 
 ---
 
 ## Version History
+
+### v2.7.0 - Fixed 'Other' Category Issue (BUG FIX)
+**Status**: 🚀 **READY TO DEPLOY**  
+**Date**: October 21, 2025  
+**Type**: Bug Fix - Dashboard Accuracy
+
+**Problem Fixed:**
+Documents were appearing in the dashboard as "Other" category even though all documents should be properly categorized by website.
+
+**Root Cause:**
+The `get_storage_statistics()` function was not properly filtering out folder placeholder files (`.folder`) that were being created by `ensure_website_folder_exists()`. These system files don't have document content but were being counted in statistics.
+
+**Changes Made:**
+
+1. ✅ **Enhanced File Filtering** - Now excludes `.folder` placeholder files from statistics (line 983)
+2. ✅ **Better Error Logging** - Documents without folder prefix now logged as warnings for investigation
+3. ✅ **Clearer Categorization** - Changed "other" to "Uncategorized (Legacy)" for better clarity
+4. ✅ **NEW: Cleanup Utility** - Added `/api/cleanup_uncategorized` endpoint to delete uncategorized documents
+   - GET: Lists uncategorized documents (dry run - safe)
+   - POST with `{"dry_run": false}`: Actually deletes documents
+   - Deleted documents re-downloaded on next crawl with proper structure
+5. ✅ **Code Quality** - Improved comments and structure for maintainability
+
+**Technical Details:**
+```python
+# Before: Only filtered specific filenames
+if name and name not in ['document_hashes.json', 'crawl_history.json']:
+
+# After: Also filters folder placeholders
+if name and name not in ['document_hashes.json', 'crawl_history.json'] and not name.endswith('/.folder'):
+```
+
+**Impact:**
+- ✅ Dashboard now shows accurate document counts per website
+- ✅ No more "Other" category for properly stored documents
+- ✅ Better visibility into any legacy documents without folder structure
+- ✅ Cleaner storage statistics
+
+**Deployment:**
+- No breaking changes - safe to deploy over v2.6.0
+- Backward compatible with existing storage structure
+- Immediate dashboard accuracy improvement
+
+---
 
 ### v2.6.0 - Smart Storage Organization + AI-Ready Metadata (MAJOR ENHANCEMENT)
 **Status**: 🚀 **READY TO DEPLOY**  

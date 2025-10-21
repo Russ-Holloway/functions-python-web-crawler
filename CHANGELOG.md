@@ -1,5 +1,35 @@
 ## Functions Python Web Crawler Changelog
 
+<a name="2.7.0"></a>
+# 2.7.0 (2025-10-21)
+
+*Bug Fix*
+* **Fixed 'Other' Category:** Resolved issue where documents were incorrectly appearing as "Other" in dashboard
+* **Enhanced File Filtering:** Now properly excludes `.folder` placeholder files from storage statistics
+* **Better Error Logging:** Documents without folder prefixes now logged as warnings for investigation
+* **Improved Categorization:** Changed "other" to "Uncategorized (Legacy)" for clarity
+
+*New Features*
+* **Cleanup Utility:** New `/api/cleanup_uncategorized` endpoint to delete uncategorized documents
+  - GET: Lists uncategorized documents (dry run - safe)
+  - POST with `{"dry_run": false}`: Actually deletes uncategorized documents
+  - Deleted documents will be re-downloaded with proper structure on next crawl
+  - Built-in safety: dry run by default, system files protected
+* **Smart Cleanup:** Automatically filters out system files and folder placeholders
+* **Detailed Reporting:** Shows count, file list, and total size of uncategorized documents
+
+*Technical Changes*
+* Added `delete_uncategorized_documents()` utility function (lines 945-1054)
+* Added `/api/cleanup_uncategorized` HTTP endpoint for document cleanup
+* Modified `get_storage_statistics()` to filter out `.folder` placeholder files (line 983)
+* Enhanced blob categorization logic to log uncategorized documents (lines 1126-1136)
+* Improved code comments for better maintainability
+
+*Impact*
+* Dashboard now shows accurate document counts per website
+* No more false "Other" category entries
+* Better visibility into any legacy documents without folder structure
+
 <a name="2.6.0"></a>
 # 2.6.0 (2025-10-19)
 
