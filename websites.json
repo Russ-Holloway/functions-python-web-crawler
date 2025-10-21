@@ -8,14 +8,15 @@
       "name": "College of Policing - App Portal",
       "url": "https://www.college.police.uk/app",
       "enabled": true,
-      "description": "College of Policing APP guidance - web-based content captured as HTML documents",
+      "description": "College of Policing APP guidance - web-based content captured as HTML documents (2-level: categories then guidance)",
       "document_types": ["pdf", "doc", "docx", "xml", "html"],
       "crawl_depth": "deep",
       "priority": "high",
       "multi_level": false,
       "max_depth": 1,
       "capture_html_guidance": true,
-      "max_guidance_pages": 100
+      "max_guidance_pages": 200,
+      "guidance_min_depth": 2
     },
     {
       "id": "cps_working",

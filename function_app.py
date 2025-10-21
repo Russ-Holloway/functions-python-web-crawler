@@ -519,13 +519,14 @@ def download_document(url):
         logging.error(f'Document download failed: {str(e)}')
         return {"success": False, "error": str(e)}
 
-def is_guidance_page(url):
+def is_guidance_page(url, min_depth=2):
     """Determine if URL is likely a guidance content page (not navigation/listing)
     
     Used for College of Policing APP guidance which is web-based, not downloadable files.
     
     Args:
         url: URL to check
+        min_depth: Minimum path depth (default 2 = /app/category/topic)
         
     Returns:
         bool: True if likely a guidance page
@@ -548,6 +549,14 @@ def is_guidance_page(url):
     for pattern in navigation_indicators:
         if re.search(pattern, url, re.IGNORECASE):
             return False
+    
+    # Check path depth
+    parsed = urllib.parse.urlparse(url)
+    path_parts = [p for p in parsed.path.split('/') if p]
+    
+    # For College of Policing: need at least /app/category/topic (3 parts minimum)
+    if min_depth >= 2 and len(path_parts) < 3:
+        return False
     
     # Check if it matches guidance patterns
     for pattern in app_guidance_patterns:
@@ -910,14 +919,17 @@ def crawl_website_core(site_config, previous_hashes=None):
         # HTML Guidance Capture Mode (for College of Policing APP and similar sites)
         # If enabled, capture web-based guidance pages as HTML documents
         if site_config.get("capture_html_guidance", False):
-            logging.info(f'HTML guidance capture enabled for {site_name} - will capture web-based guidance pages')
+            logging.info(f'HTML guidance capture enabled for {site_name} - will discover and capture web-based guidance pages')
             
             # Parse the main page to find all relevant links
             parser = EnhancedDocumentLinkParser()
             parser.feed(content)
             
-            # Filter for guidance page URLs (not navigation/listing pages)
-            guidance_pages = []
+            # Get minimum depth requirement
+            min_depth = site_config.get("guidance_min_depth", 2)
+            
+            # First, discover category pages (Level 1)
+            category_pages = []
             for link in parser.all_links:
                 # Convert to absolute URL
                 if link.startswith(('http://', 'https://')):
@@ -928,26 +940,86 @@ def crawl_website_core(site_config, previous_hashes=None):
                 else:
                     full_url = urllib.parse.urljoin(site_url, link)
                 
-                # Check if it's a guidance page
-                if is_guidance_page(full_url):
-                    guidance_pages.append({
-                        "url": full_url,
-                        "filename": full_url.split('/')[-1] or "guidance",
-                        "type": "html_guidance",
-                        "extension": "html"
-                    })
+                # Check if it's a category page (1 level deep: /app/category)
+                parsed = urllib.parse.urlparse(full_url)
+                path_parts = [p for p in parsed.path.split('/') if p]
+                if len(path_parts) == 2 and '/app/' in full_url.lower():
+                    category_pages.append(full_url)
             
-            logging.info(f'Found {len(guidance_pages)} guidance pages to capture for {site_name}')
+            logging.info(f'Found {len(category_pages)} category pages on {site_name}')
             
-            # Limit to reasonable number for first implementation
+            # Now crawl each category page to find guidance pages (Level 2)
+            guidance_pages = []
+            max_categories = min(20, len(category_pages))  # Limit categories for safety
+            logging.info(f'Will crawl {max_categories} category pages to find guidance')
+            
+            import time
+            for i, category_url in enumerate(category_pages[:max_categories]):
+                try:
+                    logging.info(f'Crawling category {i+1}/{max_categories}: {category_url}')
+                    
+                    # Download category page
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    }
+                    req = urllib.request.Request(category_url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=15) as response:
+                        raw_cat = response.read()
+                        if response.info().get('Content-Encoding') == 'gzip':
+                            cat_content = gzip.decompress(raw_cat).decode('utf-8')
+                        else:
+                            cat_content = raw_cat.decode('utf-8')
+                    
+                    # Parse category page for guidance links
+                    cat_parser = EnhancedDocumentLinkParser()
+                    cat_parser.feed(cat_content)
+                    
+                    for link in cat_parser.all_links:
+                        # Convert to absolute URL
+                        if link.startswith(('http://', 'https://')):
+                            guidance_url = link
+                        elif link.startswith('/'):
+                            base = urllib.parse.urlparse(site_url)
+                            guidance_url = f"{base.scheme}://{base.netloc}{link}"
+                        else:
+                            guidance_url = urllib.parse.urljoin(category_url, link)
+                        
+                        # Check if it's a guidance page using updated function
+                        if is_guidance_page(guidance_url, min_depth=min_depth):
+                            guidance_pages.append({
+                                "url": guidance_url,
+                                "filename": guidance_url.split('/')[-1] or "guidance",
+                                "type": "html_guidance",
+                                "extension": "html"
+                            })
+                    
+                    # Be respectful - add delay
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    logging.warning(f'Failed to crawl category page {category_url}: {str(e)}')
+                    continue
+            
+            # Remove duplicates
+            seen_urls = set()
+            unique_guidance = []
+            for page in guidance_pages:
+                if page["url"] not in seen_urls:
+                    seen_urls.add(page["url"])
+                    unique_guidance.append(page)
+            
+            logging.info(f'Found {len(unique_guidance)} unique guidance pages to capture for {site_name}')
+            
+            # Limit to reasonable number
             max_guidance_pages = site_config.get("max_guidance_pages", 50)
-            if len(guidance_pages) > max_guidance_pages:
+            if len(unique_guidance) > max_guidance_pages:
                 logging.info(f'Limiting to first {max_guidance_pages} guidance pages')
-                guidance_pages = guidance_pages[:max_guidance_pages]
+                unique_guidance = unique_guidance[:max_guidance_pages]
             
             # Add guidance pages to documents list
-            all_documents.extend(guidance_pages)
-            logging.info(f'Total items to process: {len(all_documents)} (includes {len(guidance_pages)} HTML guidance pages)')
+            all_documents.extend(unique_guidance)
+            logging.info(f'Total items to process: {len(all_documents)} (includes {len(unique_guidance)} HTML guidance pages)')
         
         # Multi-level crawling if enabled (for traditional document discovery)
         elif site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
