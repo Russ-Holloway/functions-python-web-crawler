@@ -31,9 +31,10 @@ class EnhancedDocumentLinkParser(HTMLParser):
             r'/files?/',         # files folder
             r'\.pdf\?',         # PDF with parameters
             r'download',         # download links
-            r'/ukpga/\d{4}-\d{4}', # UK legislation decade-based links (e.g., /ukpga/1990-1999)
-            r'/ukpga/\d{4}',       # UK legislation year-based links (e.g., /ukpga/2025)
-            r'/uksi/\d{4}',        # UK statutory instruments by year
+            r'/pdfs/',          # legislation.gov.uk PDFs folder
+            r'/data\.xml',      # legislation.gov.uk XML data files
+            r'/data\.akn',      # legislation.gov.uk AKN format
+            r'/data\.htm',      # legislation.gov.uk HTML data format
         ]
     
     def handle_starttag(self, tag, attrs):
