@@ -1092,6 +1092,104 @@ def crawl_website_core(site_config, previous_hashes=None):
             # Add guidance pages to documents list
             all_documents.extend(unique_guidance)
             logging.info(f'Total items to process: {len(all_documents)} (includes {len(unique_guidance)} HTML guidance pages)')
+            
+            # CPS-specific guidance discovery (alphabetical index approach)
+            # Check if this is a CPS site needing special handling
+            if "cps.gov.uk" in site_url.lower() and "/prosecution-guidance" in site_url.lower():
+                logging.info(f'🔍 CPS-specific guidance discovery activated for {site_name}')
+                
+                # CPS uses alphabetical index pages: subject_area=2343 (A) through 2368 (Z)
+                cps_guidance_pages = []
+                base_domain = urllib.parse.urlparse(site_url)
+                base_url = f"{base_domain.scheme}://{base_domain.netloc}"
+                
+                # Generate all 26 alphabetical index URLs
+                alphabet_urls = []
+                for i in range(26):  # A-Z
+                    subject_area = 2343 + i
+                    letter = chr(65 + i)  # A=65, B=66, etc.
+                    alpha_url = f"{base_url}/prosecution-guidance-search?subject_area={subject_area}"
+                    alphabet_urls.append((letter, alpha_url))
+                
+                logging.info(f'📚 Will crawl {len(alphabet_urls)} alphabetical index pages (A-Z)')
+                
+                # Crawl each alphabetical page to find guidance links
+                import time
+                for letter, alpha_url in alphabet_urls:
+                    try:
+                        logging.info(f'  Crawling letter "{letter}": {alpha_url}')
+                        
+                        # Download alphabetical index page
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                            'Accept-Language': 'en-GB,en;q=0.9',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                        }
+                        req = urllib.request.Request(alpha_url, headers=headers)
+                        with urllib.request.urlopen(req, timeout=15) as response:
+                            raw_alpha = response.read()
+                            if response.info().get('Content-Encoding') == 'gzip':
+                                alpha_content = gzip.decompress(raw_alpha).decode('utf-8')
+                            else:
+                                alpha_content = raw_alpha.decode('utf-8')
+                        
+                        # Parse alphabetical page for guidance links
+                        alpha_parser = EnhancedDocumentLinkParser()
+                        alpha_parser.feed(alpha_content)
+                        
+                        letter_count = 0
+                        for link in alpha_parser.all_links:
+                            # Convert to absolute URL
+                            if link.startswith(('http://', 'https://')):
+                                guidance_url = link
+                            elif link.startswith('/'):
+                                guidance_url = f"{base_url}{link}"
+                            else:
+                                guidance_url = urllib.parse.urljoin(alpha_url, link)
+                            
+                            # Check if it's a CPS guidance page using our detection function
+                            if is_cps_guidance_page(guidance_url):
+                                cps_guidance_pages.append({
+                                    "url": guidance_url,
+                                    "filename": guidance_url.split('/')[-1] or "guidance",
+                                    "type": "html_guidance",
+                                    "extension": "html"
+                                })
+                                letter_count += 1
+                        
+                        if letter_count > 0:
+                            logging.info(f'  ✅ Letter "{letter}": Found {letter_count} guidance pages')
+                        
+                        # Be respectful - add delay between requests
+                        time.sleep(0.5)
+                        
+                    except urllib.error.HTTPError as e:
+                        logging.warning(f'  ⚠️  Letter "{letter}": HTTP error {e.code} - {str(e)}')
+                        continue
+                    except Exception as e:
+                        logging.warning(f'  ⚠️  Letter "{letter}": Failed to crawl - {str(e)}')
+                        continue
+                
+                # Remove duplicates from CPS guidance pages
+                seen_cps_urls = set()
+                unique_cps_guidance = []
+                for page in cps_guidance_pages:
+                    if page["url"] not in seen_cps_urls:
+                        seen_cps_urls.add(page["url"])
+                        unique_cps_guidance.append(page)
+                
+                logging.info(f'📊 CPS Discovery Summary: Found {len(unique_cps_guidance)} unique prosecution guidance pages across A-Z')
+                
+                # Limit to configured maximum
+                max_cps_pages = site_config.get("max_guidance_pages", 300)
+                if len(unique_cps_guidance) > max_cps_pages:
+                    logging.info(f'⚠️  Limiting to first {max_cps_pages} CPS guidance pages (found {len(unique_cps_guidance)})')
+                    unique_cps_guidance = unique_cps_guidance[:max_cps_pages]
+                
+                # Add CPS guidance pages to documents list
+                all_documents.extend(unique_cps_guidance)
+                logging.info(f'✅ Total items to process: {len(all_documents)} (includes {len(unique_cps_guidance)} CPS guidance pages)')
         
         # Multi-level crawling if enabled (for traditional document discovery)
         elif site_config.get("multi_level", False) and site_config.get("max_depth", 1) > 1:
