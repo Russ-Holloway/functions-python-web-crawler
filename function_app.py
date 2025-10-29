@@ -570,6 +570,41 @@ def is_guidance_page(url, min_depth=2):
     
     return False
 
+def is_cps_guidance_page(url):
+    """Determine if URL is a CPS prosecution guidance content page
+    
+    CPS guidance pages follow the pattern: /prosecution-guidance/{topic}
+    where {topic} is a kebab-case slug like 'abuse-process', 'bail-applications', etc.
+    
+    Args:
+        url: URL to check
+        
+    Returns:
+        bool: True if it's a CPS guidance page
+    """
+    # CPS guidance pattern: /prosecution-guidance/{topic-name}
+    # Must have exactly 2 path segments after domain
+    cps_guidance_pattern = r'/prosecution-guidance/[a-z0-9-]+$'
+    
+    # Exclude navigation/index pages
+    exclusion_patterns = [
+        r'/prosecution-guidance/?$',           # Main page
+        r'/prosecution-guidance-search',       # Search/alphabetical pages
+        r'/prosecution-guidance-library',      # Library page
+        r'/node/',                             # Drupal node URLs
+    ]
+    
+    # Check exclusions first
+    for pattern in exclusion_patterns:
+        if re.search(pattern, url, re.IGNORECASE):
+            return False
+    
+    # Check if matches CPS guidance pattern
+    if re.search(cps_guidance_pattern, url, re.IGNORECASE):
+        return True
+    
+    return False
+
 def capture_html_guidance(url, site_name="Unknown"):
     """Capture HTML content from guidance pages
     
