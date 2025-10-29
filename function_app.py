@@ -1261,13 +1261,18 @@ def validate_storage_consistency(uploaded_count, storage_account="stbtpuksprodcr
         actual_count = storage_stats.get("total_documents", 0)
         
         # Calculate validation metrics
+        is_match = uploaded_count == actual_count
+        accuracy_percentage = round((actual_count / uploaded_count * 100) if uploaded_count > 0 else 100, 2)
+        
         validation_result = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "uploaded_count": uploaded_count,
             "storage_count": actual_count,
-            "match": uploaded_count == actual_count,
+            "match": is_match,
+            "status": "match" if is_match else "mismatch",  # Phase 2: Dashboard requires status field
             "discrepancy": abs(uploaded_count - actual_count),
-            "accuracy_percent": round((actual_count / uploaded_count * 100) if uploaded_count > 0 else 100, 2)
+            "accuracy_percent": accuracy_percentage,  # Keep for backward compatibility
+            "accuracy_percentage": accuracy_percentage  # Phase 2: Dashboard expects this field name
         }
         
         # Log results
@@ -2588,7 +2593,8 @@ def api_stats(req: func.HttpRequest) -> func.HttpResponse:
                 "status": last_validation.get("status") if last_validation else "unknown",
                 "uploaded_count": last_validation.get("uploaded_count") if last_validation else 0,
                 "storage_count": last_validation.get("storage_count") if last_validation else 0,
-                "accuracy_percentage": last_validation.get("accuracy_percentage") if last_validation else 0
+                "accuracy_percentage": last_validation.get("accuracy_percentage") if last_validation else 0,
+                "match": last_validation.get("match") if last_validation else False  # Include match for backward compatibility
             },
             "crawl_history": crawl_history[-10:],  # Last 10 crawls
             "timestamp": datetime.now(timezone.utc).isoformat()
@@ -3111,37 +3117,50 @@ def dashboard(req: func.HttpRequest) -> func.HttpResponse:
         
         function updateValidationStats(validation, activity) {
             // Phase 2: Display storage validation metrics
-            const statusIcon = validation.status === 'match' ? '✅' : validation.status === 'mismatch' ? '⚠️' : '❓';
-            const statusClass = validation.status === 'match' ? 'status-enabled' : 'status-disabled';
+            // Add defensive checks for missing or malformed data
+            if (!validation) {
+                document.getElementById('validation-stats').innerHTML = '<div class="error">Validation data not available</div>';
+                return;
+            }
+            
+            const status = validation.status || 'unknown';
+            const accuracyPercentage = validation.accuracy_percentage || 0;
+            const lastCheck = validation.last_check || 'Never';
+            const uploadedCount = validation.uploaded_count || 0;
+            const storageCount = validation.storage_count || 0;
+            const collisions24h = (activity && activity.collisions_detected_24h) || 0;
+            
+            const statusIcon = status === 'match' ? '✅' : status === 'mismatch' ? '⚠️' : '❓';
+            const statusClass = status === 'match' ? 'status-enabled' : 'status-disabled';
             
             const html = `
                 <div class="metric">
                     <span class="metric-label">Validation Status</span>
-                    <span class="metric-value ${statusClass}">${statusIcon} ${validation.status.toUpperCase()}</span>
+                    <span class="metric-value ${statusClass}">${statusIcon} ${status.toUpperCase()}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Storage Accuracy</span>
-                    <span class="metric-value ${validation.accuracy_percentage >= 99 ? 'status-enabled' : 'status-disabled'}">
-                        ${validation.accuracy_percentage.toFixed(2)}%
+                    <span class="metric-value ${accuracyPercentage >= 99 ? 'status-enabled' : 'status-disabled'}">
+                        ${accuracyPercentage.toFixed(2)}%
                     </span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Last Validation Check</span>
-                    <span class="metric-value">${formatDateTime(validation.last_check)}</span>
+                    <span class="metric-value">${formatDateTime(lastCheck)}</span>
                 </div>
                 <hr style="margin: 15px 0;">
                 <div class="metric">
                     <span class="metric-label">Uploaded This Session</span>
-                    <span class="metric-value">${validation.uploaded_count}</span>
+                    <span class="metric-value">${uploadedCount}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Verified in Storage</span>
-                    <span class="metric-value">${validation.storage_count}</span>
+                    <span class="metric-value">${storageCount}</span>
                 </div>
                 <div class="metric">
                     <span class="metric-label">Filename Collisions (24h)</span>
-                    <span class="metric-value ${activity.collisions_detected_24h === 0 ? 'status-enabled' : 'status-disabled'}">
-                        ${activity.collisions_detected_24h} ${activity.collisions_detected_24h === 0 ? '(Good ✓)' : '(Review Required)'}
+                    <span class="metric-value ${collisions24h === 0 ? 'status-enabled' : 'status-disabled'}">
+                        ${collisions24h} ${collisions24h === 0 ? '(Good ✓)' : '(Review Required)'}
                     </span>
                 </div>
             `;

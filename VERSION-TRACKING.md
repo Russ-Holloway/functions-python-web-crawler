@@ -1,10 +1,64 @@
 # Version Tracking - Web Crawler Project
 
-## Current Version: v2.8.0 (HTML Guidance Capture - Ready to Test)
+## Current Version: v2.8.1 (Dashboard Validation Fix - Ready to Deploy)
 
 ---
 
 ## Version History
+
+### v2.8.1 - Dashboard Storage Validation Fix (BUG FIX)
+**Status**: 🚀 **READY TO DEPLOY**  
+**Date**: October 29, 2025  
+**Type**: Bug Fix - Dashboard Display
+
+**Problem Fixed:**
+Storage Validation (Phase 2) dashboard panel was displaying incorrect values:
+- Validation Status: "❓ UNKNOWN" 
+- Storage Accuracy: "0.00%"
+- Last Validation Check: "Invalid Date"
+- All metrics showing zeros
+
+**Root Cause:**
+Data structure mismatch between the validation function and dashboard:
+1. `validate_storage_consistency()` returned `accuracy_percent` but dashboard expected `accuracy_percentage`
+2. Validation function didn't include `status` field that dashboard required
+3. JavaScript lacked defensive coding for missing data
+
+**Changes Made:**
+
+1. ✅ **Updated `validate_storage_consistency()` function** (lines 1263-1276)
+   - Added `status` field: "match" or "mismatch" based on validation result
+   - Added `accuracy_percentage` field (dashboard expected name)
+   - Kept `accuracy_percent` for backward compatibility with logging
+
+2. ✅ **Updated `/api/stats` endpoint** (lines 2586-2598)
+   - Fixed field mapping to use correct `accuracy_percentage` field
+   - Added `match` field for backward compatibility
+
+3. ✅ **Enhanced `updateValidationStats()` JavaScript** (lines 3118-3164)
+   - Added null/undefined checks for validation data
+   - Provided default values for all metrics
+   - Added error message when validation data unavailable
+   - Safe handling of activity.collisions_detected_24h
+
+**Impact:**
+- ✅ Dashboard now correctly displays validation status
+- ✅ Storage accuracy percentage shown accurately
+- ✅ Last validation timestamp displays correctly
+- ✅ Upload/storage counts display properly
+- ✅ Collision detection metrics work correctly
+- ✅ No breaking changes - backward compatible
+
+**Files Modified:**
+- `function_app.py` - Validation function, API endpoint, dashboard JavaScript
+
+**Deployment:**
+- Safe to deploy over v2.8.0
+- No database/storage changes required
+- Immediate dashboard improvement
+- No configuration changes needed
+
+---
 
 ### v2.8.0 - HTML Guidance Capture Feature (MAJOR FEATURE)
 **Status**: 🧪 **TESTING**  
