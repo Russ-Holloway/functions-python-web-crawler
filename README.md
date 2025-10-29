@@ -11,17 +11,80 @@ description: Production-ready web crawler built with Azure Durable Functions and
 
 # Azure Functions Python Web Crawler
 
-A production-ready, scalable web crawler built with Azure Durable Functions that processes multiple websites in parallel. The crawler extracts content, generates unique filenames, and saves the results to Azure Blob Storage with comprehensive error handling and monitoring.
+A production-ready, scalable web crawler built with Azure Durable Functions that processes multiple websites in parallel. The crawler extracts content from legal guidance websites, generates unique filenames, and saves results to Azure Blob Storage with comprehensive monitoring and change detection.
+
+[![Version](https://img.shields.io/badge/version-2.8.1-blue.svg)](VERSION-TRACKING.md)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Azure Functions](https://img.shields.io/badge/azure--functions-v2-blue.svg)](https://learn.microsoft.com/en-us/azure/azure-functions/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE.md)
+
+## Overview
+
+This Azure Function application automatically monitors and captures legal guidance documents and web content from multiple sources including:
+
+- **Crown Prosecution Service (CPS)** - Prosecution guidance (HTML content, 200-300 pages)
+- **College of Policing** - Authorised Professional Practice (APP) guidance (HTML content)
+- **Sentencing Council** - Sentencing guidelines (downloadable documents)
+- **Home Office** - Legislation and circulars (downloadable documents)
+
+### Key Capabilities
+
+- **Parallel Processing**: Crawl multiple websites simultaneously using Durable Functions orchestration
+- **Smart Content Extraction**: Extract both downloadable documents (PDF, DOC, DOCX) and HTML web content
+- **HTML Guidance Capture**: Intelligent extraction of web-based guidance with content filtering
+- **Change Detection**: Hash-based monitoring to detect document updates automatically
+- **Unique Filename Generation**: Collision-resistant naming with timestamp and content hash
+- **Azure Blob Storage**: Organized storage with website-specific folders and metadata
+- **Production Monitoring**: Real-time dashboard with statistics, validation, and health monitoring
+- **Storage Validation**: Automated consistency checks between metadata and actual storage
+- **AI Search Ready**: Metadata optimized for Azure AI Search integration
 
 ## Features
 
-- **Parallel Processing**: Crawl multiple websites simultaneously using Azure Durable Functions orchestration
-- **Smart Content Extraction**: Extract titles, metadata, and content from web pages
-- **Unique Filename Generation**: Automatically generate collision-resistant filenames for crawled content
-- **Azure Blob Storage**: Store crawled content with organized naming conventions
-- **Production Error Handling**: Comprehensive error handling with detailed logging
-- **Monitoring Ready**: Integration with Application Insights for monitoring and diagnostics
-- **Configurable**: Easy website management through JSON configuration
+### Content Capture
+
+- **Document Downloads**: Automatically download PDF, DOC, DOCX, and other document types
+- **HTML Guidance Extraction**: Extract web-based guidance content with intelligent filtering
+  - Detects guidance pages vs navigation pages
+  - Extracts main content (excludes headers, footers, navigation)
+  - Validates substantial content (>500 characters)
+- **CPS Alphabetical Discovery**: Navigate A-Z subject indices to find all prosecution guidance
+- **Multi-Level Crawling**: Follow links to discover all available documents
+
+### Storage & Organization
+
+- **Smart Folder Structure**: `{website-name}/{filename}` organization in Azure Blob Storage
+- **Collision-Resistant Naming**: Timestamps + content hash ensure unique filenames
+- **Rich Metadata**: Source, capture date, content type, file size, hash stored with each document
+- **Change Detection**: Hash-based tracking identifies when documents are updated
+
+### Monitoring & Validation
+
+- **Real-Time Dashboard**: View crawl statistics, document counts, and system health
+- **Storage Validation**: Automated consistency checks (Phase 2 validation)
+- **Activity Tracking**: Monitor recent crawls, uploads, and detected changes
+- **Error Logging**: Comprehensive error tracking with Application Insights integration
+
+### Production Ready
+
+### Production Ready
+
+- **Managed Identity**: Secure authentication to Azure resources without connection strings
+- **Error Handling**: Comprehensive try-catch blocks with detailed logging
+- **Retry Logic**: Built-in retry for transient failures
+- **Scalable Architecture**: Azure Durable Functions orchestration handles high workloads
+- **CI/CD Ready**: GitHub Actions workflow for automated deployment
+
+## Current Version: v2.8.1
+
+**Recent Improvements:**
+
+✅ **Dashboard Fix** - Storage Validation panel now displays correctly  
+✅ **CPS Guidance Capture** - Complete alphabetical discovery (A-Z) for prosecution guidance  
+✅ **HTML Content Extraction** - Enhanced extraction for legal guidance web pages  
+✅ **Configuration Updates** - Optimized settings for CPS and College of Policing
+
+See [VERSION-TRACKING.md](VERSION-TRACKING.md) for detailed release history and [CHANGELOG.md](CHANGELOG.md) for version notes.
 
 ## Architecture
 
@@ -113,53 +176,82 @@ Edit `websites.json` to add your target websites:
 
 ## Deployment to Azure
 
-### Prerequisites
+### Quick Deploy (GitHub Actions - Recommended)
 
-1. **Create Azure Resources**:
+This project uses GitHub Actions for automated deployment:
+
+1. **Push to main branch**:
+
+   ```bash
+   git add .
+   git commit -m "Your changes"
+   git push origin main
+   ```
+
+2. **Monitor deployment**:
+   - Visit: `https://github.com/YOUR-USERNAME/functions-python-web-crawler/actions`
+   - Expected time: 3-5 minutes
+
+3. **Verify function**:
+
+   ```bash
+   curl "https://YOUR-FUNCTION-APP.azurewebsites.net/api/dashboard"
+   ```
+
+### Manual Deployment (Azure CLI)
+
+For manual deployments or initial setup:
+
+1. **Create Azure Resources** (one-time setup):
+
    - Resource Group
-   - Function App (Python 3.10+)
+   - Function App (Python 3.10+, Linux)
    - Storage Account
+   - Application Insights (recommended)
 
-2. **Create Resource Reference File** (optional):
+2. **Create Resource Reference** (optional, for documentation):
    
-   Create `AZURE_RESOURCE_REFERENCE.md` in your local copy (ignored by git):
+   Copy `AZURE_RESOURCE_REFERENCE.md.template` to `AZURE_RESOURCE_REFERENCE.md` and fill in your resource names:
+
    ```markdown
    # Azure Resource Reference
    
-   - Resource Group: `your-resource-group`
-   - Function App: `your-function-app`
-   - Storage Account: `your-storage-account`
+   - Resource Group: `rg-your-resource-group`
+   - Function App: `func-your-function-app`
+   - Storage Account: `styourstorageaccount`
    - Subscription ID: `your-subscription-id`
    ```
 
-### Deployment Steps
+   Note: This file is gitignored and used only for local reference.
 
-1. **Create Deployment Package**:
+3. **Deploy with Azure CLI**:
+
    ```bash
-   # Create deployment ZIP
-   zip -r v1.0.0-deployment.zip . \
+   # Create deployment package
+   zip -r v2.8.1-deployment.zip . \
      -x "*.git*" -x "*.vscode*" -x "*__pycache__*" \
-     -x "*.venv*" -x "*tests*" -x "*.zip"
-   ```
+     -x "*.venv*" -x "*tests*" -x "*archive*" -x "*.zip"
 
-2. **Deploy to Azure**:
-   ```bash
+   # Deploy to Azure
    az functionapp deployment source config-zip \
      --resource-group YOUR_RESOURCE_GROUP \
      --name YOUR_FUNCTION_APP \
-     --src v1.0.0-deployment.zip \
+     --src v2.8.1-deployment.zip \
      --subscription YOUR_SUBSCRIPTION_ID
    ```
 
-3. **Configure Application Settings**:
+4. **Configure Application Settings** (if using connection strings):
+
    ```bash
    az functionapp config appsettings set \
      --resource-group YOUR_RESOURCE_GROUP \
      --name YOUR_FUNCTION_APP \
-     --settings STORAGE_CONNECTION_STRING="YOUR_STORAGE_CONNECTION_STRING"
+     --settings STORAGE_CONNECTION_STRING="YOUR_CONNECTION_STRING"
    ```
 
-For detailed deployment instructions, see [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+   **Note**: Managed Identity is recommended over connection strings for production.
+
+For detailed deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Usage
 
